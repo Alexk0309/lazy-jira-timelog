@@ -92,3 +92,65 @@ describe('Service', () => {
     expect((await service.reminderDue()).due).toBe(false);
   });
 });
+
+describe('Service.aiSuggest', () => {
+  async function aiStore() {
+    const store = await seeded();
+    await store.saveSettings({ cursorApiKey: 'key_1' });
+    const pr = '~pr51';
+    for (let m = 60; m <= 100; m++) {
+      await store.addHeartbeat({ t: base + m * MIN, repo: 'github.com', branch: pr, key: pr, signal: 'tick' });
+    }
+    await store.addNote({ t: base + 60 * MIN, repo: 'github.com', branch: pr, hash: 'github.com/acme/api/pull/51', subject: 'Fix payout CSV export (#51)' });
+    return store;
+  }
+
+  function fakeApis(reply: string) {
+    let prompt = '';
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/rest/api/3/search/jql')) {
+        expect(JSON.parse(init?.body as string).jql).toMatch(/^assignee = currentUser\(\) AND statusCategory != Done/);
+        return json({ issues: [{ key: 'PAY-8', fields: { summary: 'Payout reports for finance' } }] });
+      }
+      if (url.includes('/rest/api/3/issue/PAY-7')) return json({ key: 'PAY-7', fields: { summary: 'Refund flow' } });
+      if (url.endsWith('/v1/agents') && init?.method === 'POST') {
+        prompt = JSON.parse(init.body as string).prompt.text;
+        return json({ agent: { id: 'bc-1' }, run: { id: 'run-1', status: 'FINISHED', result: reply } });
+      }
+      return json({});
+    });
+    return { fetchImpl, prompt: () => prompt };
+  }
+
+  it('sends the day to Cursor and keeps only matches to assigned issues', async () => {
+    const store = await aiStore();
+    const reply = '{"rows":[{"id":"PAY-7","comment":"Built refunds."},{"id":"~pr51","comment":"Fixed CSV export.","key":"PAY-8","reason":"payout export"}]}';
+    const apis = fakeApis(reply);
+    const service = new Service(store, apis.fetchImpl, () => base + 120 * MIN, async () => {});
+    const day = (await service.drafts())[0].day;
+
+    const suggestions = await service.aiSuggest(day);
+    expect(suggestions.map((s) => [s.id, s.key ?? null, s.comment])).toEqual([
+      ['PAY-7', null, 'Built refunds.'],
+      ['~pr51', 'PAY-8', 'Fixed CSV export.'],
+    ]);
+    expect(apis.prompt()).toContain('Fix payout CSV export (#51)');
+    expect(apis.prompt()).toContain('"issue": null');
+    expect(apis.prompt()).not.toContain('acme/api');
+    expect((await store.aiState())?.status).toBe('done');
+  });
+
+  it('records a failure so the popup can show it later', async () => {
+    const store = await aiStore();
+    const service = new Service(store, fakeApis('no json here').fetchImpl, () => base + 120 * MIN, async () => {});
+    const day = (await service.drafts())[0].day;
+    await expect(service.aiSuggest(day)).rejects.toThrow(/expected format/);
+    expect(await store.aiState()).toMatchObject({ status: 'error' });
+  });
+
+  it('needs a Cursor key', async () => {
+    const service = new Service(await seeded(), vi.fn(), () => base + 60 * MIN);
+    const day = (await service.drafts())[0].day;
+    await expect(service.aiSuggest(day)).rejects.toThrow(/Cursor API key/);
+  });
+});

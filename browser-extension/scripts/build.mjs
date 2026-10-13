@@ -11,7 +11,7 @@ mkdirSync('dist', { recursive: true });
 cpSync('static', 'dist', { recursive: true });
 if (testHosts) {
   const manifest = JSON.parse(readFileSync('dist/manifest.json', 'utf8'));
-  manifest.host_permissions.push('http://localhost/*');
+  manifest.host_permissions.push('http://localhost/*', 'http://127.0.0.1/*');
   writeFileSync('dist/manifest.json', JSON.stringify(manifest, null, 2));
 }
 

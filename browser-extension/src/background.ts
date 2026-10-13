@@ -1,3 +1,4 @@
+import { isUnassignedKey } from './classify';
 import { formatDuration } from './core/time';
 import type { Api, Reply, Request } from './messages';
 import { Service } from './service';
@@ -42,7 +43,7 @@ async function refreshBadge(): Promise<void> {
   await chrome.action.setBadgeText({ text: totalMs > 0 ? (hours >= 1 ? `${Math.round(hours)}h` : `${Math.round(totalMs / 60000)}m`) : '' });
   await chrome.action.setBadgeBackgroundColor({ color: '#007AFF' });
   await chrome.action.setTitle({
-    title: totalMs > 0 ? `${formatDuration(totalMs)} to log${tracking ? ` · tracking ${tracking.key}` : ''}` : 'All logged',
+    title: totalMs > 0 ? `${formatDuration(totalMs)} to log${tracking ? ` · tracking ${isUnassignedKey(tracking.key) ? 'a pull request' : tracking.key}` : ''}` : 'All logged',
   });
   if (due) {
     chrome.notifications.create('reminder', {
@@ -119,6 +120,10 @@ const handlers: Handlers = {
     return next;
   },
   connect: () => service.connect(),
+  testCursor: () => service.testCursor(),
+  // Any extension API call keeps the worker alive while Cursor thinks.
+  aiSuggest: (p) => service.aiSuggest(p.day, () => chrome.runtime.getPlatformInfo()),
+  aiState: () => service.aiState(),
 };
 
 chrome.runtime.onMessage.addListener((msg: Request, _sender, sendResponse: (r: Reply<unknown>) => void) => {

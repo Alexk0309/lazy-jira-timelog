@@ -7,11 +7,13 @@ A Chrome extension that notices the time you spend on anything tied to a Jira is
 - **Notices work, not browsing.** Only the focused tab counts, and only when it's about a Jira issue:
   - a Jira issue page or board with an issue open;
   - a GitHub, GitLab or Bitbucket pull request or branch whose title or name contains the key (for example `PAY-7`);
-  - any other page that shows a known key, such as a Confluence page or Figma file.
-  Everything else is ignored. Only the issue key and the site name are stored, never page addresses.
+  - any other page that shows a known key, such as a Confluence page or Figma file;
+  - a pull request without a key, kept as **Unassigned** time under the PR title so you can pick the issue at review.
+  Everything else is ignored. Only the issue key, the site name and PR titles are stored, never page addresses.
 - **Stops when you do.** After 15 minutes without input, when the screen locks, or 2 minutes after you switch to something unrelated, time stops counting.
 - **Suggests what it couldn't see.** Issues you moved, or that are assigned to you and changed today, appear under "Touched in Jira today", so meetings and offline work are easy to add.
 - **One-click review.** The toolbar popup shows today's total and one row per issue, rounded to 15 minutes. Tap a row to change the issue, adjust time with the − / + stepper, edit the comment (PR titles are filled in for you), split or discard. Then press **Log**.
+- **Fill in with AI (optional).** Add a Cursor API key in Settings and each day on the review screen gets a **Fill in with AI** button. Cursor writes a one-line comment for every entry and matches unassigned time to one of the open issues assigned to you, with a short reason. Matches are checked in code against your assigned issues, and nothing is logged until you press **Log**.
 - **One reminder.** The badge shows unlogged time, and a single notification at 17:30 nudges you, only if something is unlogged.
 
 ## Install (pilot)
@@ -24,6 +26,14 @@ A Chrome extension that notices the time you spend on anything tied to a Jira is
 4. Self-hosted GitLab or another tool? Add its domain under **Sites**. Chrome will ask you to allow it.
 
 For a team rollout, publish it as an unlisted item on the Chrome Web Store, or push it with Google Admin, so updates arrive automatically.
+
+## Fill in with AI
+
+1. In Cursor, open **Dashboard → API Keys** and create a user API key.
+2. Paste it under **AI with Cursor** in Settings. The browser asks once to allow `api.cursor.com`. Click **Test key**, and optionally pick a model.
+3. On the review screen, press **Fill in with AI** next to a day.
+
+How it works: the extension calls Cursor's Cloud Agents API directly. The Cursor SDK wraps the same API but needs Node, so it can't run in a browser. Each press starts one short agent with no repository, sends it that day's issue titles, PR titles and times plus your open assigned issues, reads its JSON answer and deletes the agent. Runs are billed to your Cursor plan. If Cursor answers 403, a team admin needs to allow agents without a repository. The API is in beta, and a run typically takes a little while, so the popup can be closed and reopened; the result is waiting when it's done.
 
 ## Development
 

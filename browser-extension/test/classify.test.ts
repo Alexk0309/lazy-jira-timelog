@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyTab, cleanTitle } from '../src/classify';
+import { classifyTab, cleanTitle, isUnassignedKey, unassignedKey } from '../src/classify';
 
 const ctx = { jiraHost: 'team.atlassian.net', projectKeys: ['PAY', 'OPS'] };
 
@@ -31,7 +31,17 @@ describe('classifyTab', () => {
 
   it('falls back to a lower-case key in the branch path for known projects', () => {
     expect(classifyTab('https://github.com/acme/api/tree/feature/pay-12-refunds', 'acme/api at feature/pay-12-refunds', ctx)?.key).toBe('PAY-12');
-    expect(classifyTab('https://gitlab.com/acme/api/-/merge_requests/3', 'Draft: fix login (!3) · Merge requests · acme / api · GitLab', ctx)).toBeNull();
+  });
+
+  it('keeps pull requests without a key as unassigned work under the PR title', () => {
+    const work = classifyTab('https://gitlab.com/acme/api/-/merge_requests/3', 'Draft: fix login (!3) · Merge requests · acme / api · GitLab', ctx);
+    expect(work).toMatchObject({ source: 'gitlab.com', kind: 'pull-request', label: 'Draft: fix login (!3)' });
+    expect(isUnassignedKey(work!.key)).toBe(true);
+    expect(work!.key).toBe(unassignedKey('gitlab.com/acme/api/-/merge_requests/3'));
+    // The bucket is stable per PR and never contains the address.
+    expect(classifyTab('https://gitlab.com/acme/api/-/merge_requests/3/diffs', 'x', ctx)?.key).toBe(work!.key);
+    expect(work!.key).not.toContain('acme');
+    expect(classifyTab('https://github.com/acme/api/tree/main', 'acme/api', ctx)).toBeNull();
   });
 
   it('only counts other pages when a known key is visible', () => {

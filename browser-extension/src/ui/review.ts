@@ -1,3 +1,5 @@
+import type { AiSuggestion } from '../ai';
+import { isUnassignedKey } from '../classify';
 import { roundToStep } from '../core/drafts';
 import { dayStart, formatDuration, parseDuration } from '../core/time';
 import type { Draft } from '../core/types';
@@ -16,7 +18,7 @@ interface Row {
   comment: string;
   kind: 'tracked' | 'suggested';
   done: boolean;
-  note?: { text: string; level: 'warn' | 'error' | 'ok' };
+  note?: { text: string; level: 'warn' | 'error' | 'ok' | 'ai' };
 }
 
 const isPopup = new URLSearchParams(location.search).has('popup');
@@ -30,7 +32,13 @@ let openId: string | null = null;
 let roundMinutes = 15;
 let today = '';
 let nextId = 1;
+let aiEnabled = false;
+/** Day Cursor is currently filling in, if any. */
+let aiBusyDay: string | null = null;
 const summaries = new Map<string, string | null>();
+
+/** Saved AI suggestions older than this aren't re-applied when the popup opens. */
+const AI_FRESH_MS = 12 * 3_600_000;
 
 $('settings').addEventListener('click', () => chrome.runtime.openOptionsPage());
 $('setup-button').addEventListener('click', () => chrome.runtime.openOptionsPage());
@@ -47,12 +55,16 @@ void load();
 async function load(): Promise<void> {
   const [state, settings] = await Promise.all([call('state'), call('getSettings')]);
   roundMinutes = settings.roundMinutes;
+  aiEnabled = !!settings.cursorApiKey && !state.setupMessage;
   today = state.today;
 
   $('date').textContent = new Date(dayStart(today)).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
   const status = $('status');
   status.classList.toggle('live', !!state.tracking);
-  $('status-text').textContent = state.tracking ? `Tracking ${state.tracking.key}` : 'Not tracking';
+  const trackingKey = state.tracking?.key;
+  $('status-text').textContent = trackingKey
+    ? `Tracking ${isUnassignedKey(trackingKey) ? 'a pull request' : trackingKey}`
+    : 'Not tracking';
 
   $('setup').hidden = !state.setupMessage;
   $('setup-text').textContent = state.setupMessage ?? '';
@@ -65,6 +77,9 @@ async function load(): Promise<void> {
     void loadSummaries(rows.map((r) => r.targetKey));
     void loadManualLogs();
   }
+  if (aiEnabled) {
+    void resumeAi();
+  }
 }
 
 function fromDraft(d: Draft): Row {
@@ -72,7 +87,8 @@ function fromDraft(d: Draft): Row {
     id: String(nextId++),
     day: d.day,
     sourceKey: d.sourceKey,
-    targetKey: d.sourceKey,
+    // Unassigned buckets (e.g. a PR without a key) need an issue picked first.
+    targetKey: isUnassignedKey(d.sourceKey) ? '' : d.sourceKey,
     rawMs: d.rawMs,
     duration: formatDuration(d.seconds * 1000),
     started: d.started,
@@ -142,10 +158,11 @@ function render(): void {
   for (const day of days) {
     const dayRows = tracked.filter((r) => r.day === day);
     const total = dayRows.filter((r) => !r.done).reduce((sum, r) => sum + (parseDuration(r.duration) ?? 0), 0);
-    daysEl.append(
-      el('h2', { class: 'section-title' }, `${dayLabel(day)}${total > 0 ? ` · ${formatDuration(total * 1000)}` : ''}`),
-      el('div', { class: 'group' }, ...dayRows.map(renderRow)),
-    );
+    const title = el('h2', { class: 'section-title' }, el('span', {}, `${dayLabel(day)}${total > 0 ? ` · ${formatDuration(total * 1000)}` : ''}`));
+    if (aiEnabled && dayRows.some((r) => !r.done)) {
+      title.append(aiButton(day));
+    }
+    daysEl.append(title, el('div', { class: 'group' }, ...dayRows.map(renderRow)));
   }
   if (suggested.length > 0) {
     daysEl.append(
@@ -224,6 +241,9 @@ function renderEditor(row: Row): HTMLElement {
   let timer = 0;
   issue.addEventListener('input', () => {
     row.targetKey = issue.value.trim().toUpperCase();
+    if (row.note?.level === 'ai') {
+      row.note = undefined;
+    }
     clearTimeout(timer);
     timer = window.setTimeout(async () => {
       const found = await call('search', { query: issue.value }).catch(() => [] as IssueSummary[]);
@@ -330,7 +350,8 @@ function updateSubtitles(): void {
 
 function subtitle(row: Row): string {
   if (!row.targetKey) {
-    return 'Choose the issue this time belongs to';
+    // For an unassigned PR the comment is its title, which says what the time was.
+    return (isUnassignedKey(row.sourceKey) && row.comment.split('\n')[0]) || 'Choose the issue this time belongs to';
   }
   const summary = summaries.get(row.targetKey);
   if (summary === null) {
@@ -417,6 +438,77 @@ function splitRow(row: Row): void {
   render();
 }
 
+// ---------- Fill in with AI ----------
+
+function aiButton(day: string): HTMLElement {
+  const busy = aiBusyDay === day;
+  const button = el(
+    'button',
+    { class: `ai-button${busy ? ' busy' : ''}`, type: 'button', title: 'Ask Cursor to write comments and match unassigned time' },
+    sparkle(),
+    busy ? 'Thinking…' : 'Fill in with AI',
+  ) as HTMLButtonElement;
+  button.disabled = aiBusyDay !== null;
+  button.addEventListener('click', () => void fillInWithAi(day));
+  return button;
+}
+
+async function fillInWithAi(day: string): Promise<void> {
+  aiBusyDay = day;
+  render();
+  try {
+    const suggestions = await call('aiSuggest', { day });
+    const changed = applySuggestions(day, suggestions);
+    toast(changed > 0 ? `Filled in ${changed} ${changed === 1 ? 'entry' : 'entries'}. Check them, then log.` : 'Cursor had nothing to add.');
+  } catch (err) {
+    toast((err as Error).message);
+  } finally {
+    aiBusyDay = null;
+    render();
+  }
+}
+
+/** Puts AI suggestions into the day's open rows. Only unassigned rows get an issue. */
+function applySuggestions(day: string, suggestions: AiSuggestion[]): number {
+  let changed = 0;
+  for (const s of suggestions) {
+    const row = rows.find((r) => r.day === day && r.kind === 'tracked' && !r.done && r.sourceKey === s.id);
+    if (!row) {
+      continue;
+    }
+    if (s.comment) {
+      row.comment = s.comment;
+    }
+    if (s.key && !row.targetKey) {
+      row.targetKey = s.key;
+      if (s.summary) {
+        summaries.set(s.key, s.summary);
+      }
+      row.note = { text: `Matched by AI${s.reason ? `: ${s.reason}` : ''}`, level: 'ai' };
+    }
+    changed++;
+  }
+  return changed;
+}
+
+/** Picks up a run that finished, or is still going, after the popup was closed. */
+async function resumeAi(): Promise<void> {
+  let state = await call('aiState').catch(() => undefined);
+  if (state?.status === 'running' && Date.now() - state.at < 4 * 60_000) {
+    aiBusyDay = state.day;
+    render();
+    while (state?.status === 'running' && Date.now() - state.at < 4 * 60_000) {
+      await new Promise((r) => setTimeout(r, 2000));
+      state = await call('aiState').catch(() => undefined);
+    }
+    aiBusyDay = null;
+  }
+  if (state?.status === 'done' && state.suggestions && Date.now() - state.at < AI_FRESH_MS) {
+    applySuggestions(state.day, state.suggestions);
+  }
+  render();
+}
+
 // ---------- Helpers ----------
 
 function dayLabel(day: string): string {
@@ -430,6 +522,17 @@ function dayLabel(day: string): string {
     return 'Yesterday';
   }
   return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
+}
+
+function sparkle(): SVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'currentColor');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', 'M12 2.5c.4 3.9 2.6 6.1 6.5 6.5-3.9.4-6.1 2.6-6.5 6.5-.4-3.9-2.6-6.1-6.5-6.5 3.9-.4 6.1-2.6 6.5-6.5zM18.5 14c.2 2 1.3 3.1 3.3 3.3-2 .2-3.1 1.3-3.3 3.3-.2-2-1.3-3.1-3.3-3.3 2-.2 3.1-1.3 3.3-3.3z');
+  svg.append(path);
+  return svg;
 }
 
 function chevron(): SVGElement {

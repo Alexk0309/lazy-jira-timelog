@@ -1,14 +1,19 @@
+import { buildPrompt, parseSuggestions, type AiInput, type AiSuggestion } from './ai';
 import { buildDrafts, totalUnloggedMs } from './core/drafts';
 import { shouldRemind } from './core/reminder';
 import { buildSessions } from './core/sessions';
 import { dayEnd, dayStart, localDay, parseClock, parseDuration } from './core/time';
 import type { Draft } from './core/types';
 import { extractIssueKey } from './core/issueKey';
+import { CURSOR_API, CursorClient } from './cursor';
 import { JiraClient, type IssueSummary } from './jira';
-import type { Settings, Store } from './storage';
+import type { AiState, Settings, Store } from './storage';
 
 /** How far back the review shows unlogged days. */
 export const REVIEW_DAYS = 14;
+
+/** A "Fill in with AI" run older than this is treated as abandoned. */
+const AI_RUN_TIMEOUT_MS = 4 * 60_000;
 
 export interface PostInput {
   day: string;
@@ -38,6 +43,7 @@ export class Service {
     private readonly store: Store,
     private readonly fetchImpl: FetchLike = (url, init) => fetch(url, init),
     private readonly now: () => number = Date.now,
+    private readonly sleep?: (ms: number) => Promise<void>,
   ) {}
 
   async drafts(): Promise<Draft[]> {
@@ -131,6 +137,72 @@ export class Service {
     });
   }
 
+  private async cursor(): Promise<{ client: CursorClient; model: string }> {
+    const s = await this.store.settings();
+    const base = s.cursorApiUrl || CURSOR_API;
+    if (!/^https:\/\//.test(base) && !/^http:\/\/localhost(:\d+)?$/.test(base)) {
+      throw new Error('Cursor API URL must start with https://');
+    }
+    return { client: new CursorClient(s.cursorApiKey, this.fetchImpl, base, this.sleep), model: s.cursorModel };
+  }
+
+  /** Checks the Cursor key and lists the models it can use. */
+  async testCursor(): Promise<{ message: string; models: { id: string; displayName: string }[] }> {
+    const { client } = await this.cursor();
+    const models = await client.models();
+    return { message: `Cursor key works. ${models.length} model${models.length === 1 ? '' : 's'} available.`, models };
+  }
+
+  async aiState(): Promise<AiState | undefined> {
+    return this.store.aiState();
+  }
+
+  /**
+   * Asks Cursor to write a comment for each of the day's entries and to match
+   * unassigned time to one of your open, assigned issues. Nothing is logged.
+   */
+  async aiSuggest(day: string, keepAlive?: () => unknown): Promise<AiSuggestion[]> {
+    const running = await this.store.aiState();
+    if (running?.status === 'running' && this.now() - running.at < AI_RUN_TIMEOUT_MS) {
+      throw new Error('Cursor is still working on the last request.');
+    }
+    const { client, model } = await this.cursor();
+    const drafts = (await this.drafts()).filter((d) => d.day === day);
+    if (drafts.length === 0) {
+      throw new Error('There is nothing to fill in for this day.');
+    }
+    const jira = await this.requireClient();
+    await this.store.setAiState({ day, status: 'running', at: this.now() });
+    try {
+      const assigned = await jira.assignedToMe();
+      const keys = drafts.map((d) => issueKeyOf(d.sourceKey)).filter((k): k is string => !!k);
+      const summaries = await this.issueSummaries(keys);
+      const notes = (await this.store.notes()).filter((n) => localDay(n.t) === day);
+      const input: AiInput = {
+        day,
+        assigned,
+        rows: drafts.map((d) => {
+          const key = issueKeyOf(d.sourceKey);
+          const seen = [...new Set(notes.filter((n) => n.branch === d.sourceKey).map((n) => n.subject))];
+          return {
+            id: d.sourceKey,
+            key,
+            minutes: Math.round(d.seconds / 60),
+            title: (key ? summaries[key] : null) ?? seen[0] ?? '',
+            notes: seen,
+          };
+        }),
+      };
+      const reply = await client.ask(buildPrompt(input), { model, onPoll: keepAlive });
+      const suggestions = parseSuggestions(reply, input);
+      await this.store.setAiState({ day, status: 'done', at: this.now(), suggestions });
+      return suggestions;
+    } catch (err) {
+      await this.store.setAiState({ day, status: 'error', at: this.now(), error: (err as Error).message });
+      throw err;
+    }
+  }
+
   async search(query: string): Promise<IssueSummary[]> {
     if (query.trim().length < 2) {
       return [];
@@ -142,7 +214,7 @@ export class Service {
   async issueSummaries(keys: string[]): Promise<Record<string, string | null>> {
     const client = await this.client();
     const result: Record<string, string | null> = {};
-    for (const key of [...new Set(keys)].filter(Boolean)) {
+    for (const key of [...new Set(keys)].filter((k) => issueKeyOf(k))) {
       if (!this.summaries.has(key) && typeof client !== 'string') {
         try {
           this.summaries.set(key, (await client.issue(key))?.summary ?? null);
@@ -220,4 +292,9 @@ export class Service {
     const draft = (await this.drafts()).find((d) => d.day === day && d.sourceKey === sourceKey);
     return Math.max(0, Math.min(rawMs, draft?.rawMs ?? rawMs));
   }
+}
+
+/** The Jira key a draft bucket stands for, or null for unassigned time. */
+function issueKeyOf(sourceKey: string): string | null {
+  return sourceKey && extractIssueKey(sourceKey) === sourceKey ? sourceKey : null;
 }

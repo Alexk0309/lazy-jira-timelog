@@ -1,3 +1,4 @@
+import type { AiSuggestion } from './ai';
 import { localDay } from './core/time';
 import type { CommitRecord, Heartbeat, SettledEntry } from './core/types';
 
@@ -12,6 +13,12 @@ export interface Settings {
   /** HH:MM, or empty for no reminder. */
   reminderTime: string;
   retentionDays: number;
+  /** Cursor user API key for "Fill in with AI"; empty turns the feature off. */
+  cursorApiKey: string;
+  /** Cursor model id; empty uses the person's Cursor default. */
+  cursorModel: string;
+  /** Override for the Cursor API base URL (tests only). */
+  cursorApiUrl: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -23,7 +30,19 @@ export const DEFAULT_SETTINGS: Settings = {
   minSessionMinutes: 5,
   reminderTime: '17:30',
   retentionDays: 30,
+  cursorApiKey: '',
+  cursorModel: '',
+  cursorApiUrl: '',
 };
+
+/** The latest "Fill in with AI" run, kept so the popup can close while Cursor works. */
+export interface AiState {
+  day: string;
+  status: 'running' | 'done' | 'error';
+  at: number;
+  suggestions?: AiSuggestion[];
+  error?: string;
+}
 
 /** The subset of chrome.storage.StorageArea we use, so tests can pass a fake. */
 export interface KeyValue {
@@ -140,6 +159,15 @@ export class Store {
     } else {
       await this.kv.remove('lastSeen');
     }
+  }
+
+  async aiState(): Promise<AiState | undefined> {
+    const { ai } = await this.kv.get('ai');
+    return ai as AiState | undefined;
+  }
+
+  async setAiState(state: AiState): Promise<void> {
+    await this.kv.set({ ai: state });
   }
 
   async lastRemindedDay(): Promise<string | undefined> {
