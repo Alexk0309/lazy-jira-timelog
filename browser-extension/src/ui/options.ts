@@ -11,6 +11,11 @@ const reminderTime = $<HTMLInputElement>('reminderTime');
 const idleMinutes = $<HTMLSelectElement>('idleMinutes');
 const minSessionMinutes = $<HTMLSelectElement>('minSessionMinutes');
 const result = $('connect-result');
+const cursorApiKey = $<HTMLInputElement>('cursorApiKey');
+const cursorModel = $<HTMLSelectElement>('cursorModel');
+const cursorResult = $('cursor-result');
+
+const CURSOR_ORIGIN = 'https://api.cursor.com';
 
 let useToken = false;
 
@@ -26,6 +31,11 @@ async function init(): Promise<void> {
   selectValue(minSessionMinutes, s.minSessionMinutes);
   setRounding(s.roundMinutes);
   setAuth(!!(s.email && s.apiToken));
+  cursorApiKey.value = s.cursorApiKey;
+  if (s.cursorModel) {
+    cursorModel.append(new Option(s.cursorModel, s.cursorModel));
+    cursorModel.value = s.cursorModel;
+  }
 }
 
 function selectValue(select: HTMLSelectElement, value: number): void {
@@ -86,6 +96,38 @@ document.querySelectorAll<HTMLButtonElement>('#rounding button').forEach((b) =>
     void save({ roundMinutes: Number(b.dataset.value) });
   }),
 );
+
+cursorApiKey.addEventListener('change', async () => {
+  const key = cursorApiKey.value.trim();
+  if (key && !(await ensureHostAccess(CURSOR_ORIGIN))) {
+    toast('Access to Cursor was not granted');
+    return;
+  }
+  await save({ cursorApiKey: key }, key ? 'Cursor key saved' : 'AI turned off');
+});
+cursorModel.addEventListener('change', () => void save({ cursorModel: cursorModel.value }));
+
+$('testCursor').addEventListener('click', async () => {
+  if (!cursorApiKey.value.trim()) {
+    showCursorResult('Paste your Cursor API key first.', 'error');
+    return;
+  }
+  showCursorResult('Checking…', '');
+  try {
+    const { message, models } = await call('testCursor');
+    const current = cursorModel.value;
+    cursorModel.replaceChildren(new Option('Cursor default', ''), ...models.map((m) => new Option(m.displayName, m.id)));
+    cursorModel.value = models.some((m) => m.id === current) ? current : '';
+    showCursorResult(message, 'ok');
+  } catch (err) {
+    showCursorResult((err as Error).message, 'error');
+  }
+});
+
+function showCursorResult(text: string, level: string): void {
+  cursorResult.textContent = text;
+  cursorResult.className = `note ${level === 'ok' ? '' : level}`;
+}
 
 $('connect').addEventListener('click', async () => {
   if (useToken && (!email.value.trim() || !apiToken.value.trim())) {

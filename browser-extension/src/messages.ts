@@ -1,6 +1,7 @@
+import type { AiSuggestion } from './ai';
 import type { IssueSummary } from './jira';
 import type { PostInput, ReviewState } from './service';
-import type { Settings } from './storage';
+import type { AiState, Settings } from './storage';
 import type { Tracking } from './tracker';
 
 /** Requests the extension pages send to the background worker, and what each returns. */
@@ -15,6 +16,9 @@ export interface Api {
   getSettings: { req: void; res: Settings };
   saveSettings: { req: Partial<Settings>; res: Settings };
   connect: { req: void; res: string };
+  testCursor: { req: void; res: { message: string; models: { id: string; displayName: string }[] } };
+  aiSuggest: { req: { day: string }; res: AiSuggestion[] };
+  aiState: { req: void; res: AiState | undefined };
 }
 
 export type Request = { [K in keyof Api]: { type: K; payload: Api[K]['req'] } }[keyof Api];

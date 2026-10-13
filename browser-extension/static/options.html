@@ -77,17 +77,34 @@
       </label>
     </div>
 
+    <h2 class="section-title">AI with Cursor</h2>
+    <div class="group">
+      <label class="setting">
+        <span class="setting-label">API key<small>Cursor Dashboard → API Keys</small></span>
+        <input id="cursorApiKey" class="wide" type="password" placeholder="Paste a Cursor API key" autocomplete="off">
+      </label>
+      <label class="setting">
+        <span class="setting-label">Model</span>
+        <select id="cursorModel"><option value="">Cursor default</option></select>
+      </label>
+    </div>
+    <p class="footnote">Optional. Cursor drafts each entry's comment and matches unassigned time to open issues assigned to you. It sees that day's issue titles, PR titles and times, and runs are billed to your Cursor plan. Nothing is logged until you press Log.</p>
+    <div class="actions" style="margin: 12px 4px 0">
+      <button class="btn btn-tinted" id="testCursor">Test key</button>
+      <span class="note" id="cursor-result"></span>
+    </div>
+
     <h2 class="section-title">Sites</h2>
     <div class="group">
       <div class="setting">
-        <span class="setting-label">Jira, GitHub, GitLab and Bitbucket<small>Always on. Only tabs that mention a Jira issue count.</small></span>
+        <span class="setting-label">Jira, GitHub, GitLab and Bitbucket<small>Always on. Only tabs that mention a Jira issue, and pull requests, count.</small></span>
       </div>
       <div class="setting">
         <input id="extraSite" class="wide" type="text" placeholder="Add a site, e.g. gitlab.company.com" style="text-align:left">
         <button class="btn btn-plain" id="addSite">Allow</button>
       </div>
     </div>
-    <p class="footnote" id="sites-note">Only the issue key and the site name are stored, never page addresses or browsing history.</p>
+    <p class="footnote" id="sites-note">Only the issue key, the site name and pull request titles are stored, never page addresses or browsing history.</p>
   </div>
 
   <div class="toast" id="toast" hidden></div>

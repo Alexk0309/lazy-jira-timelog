@@ -153,6 +153,17 @@ export class JiraClient {
     return (body.issues ?? []).map((i) => ({ key: i.key, summary: i.fields.summary }));
   }
 
+  /** Open issues assigned to you, the only candidates AI matching may suggest. */
+  async assignedToMe(): Promise<IssueSummary[]> {
+    const jql = 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC';
+    const body = await this.request<{ issues: { key: string; fields: { summary: string } }[] }>(
+      'POST',
+      '/rest/api/3/search/jql',
+      { jql, fields: ['summary'], maxResults: 50 },
+    );
+    return (body.issues ?? []).map((i) => ({ key: i.key, summary: i.fields.summary }));
+  }
+
   async addWorklog(key: string, input: { started: number; seconds: number; comment: string }): Promise<string> {
     const body = await this.request<{ id: string }>(
       'POST',
