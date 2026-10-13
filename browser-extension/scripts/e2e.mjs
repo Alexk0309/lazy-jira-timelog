@@ -72,10 +72,13 @@ await new Promise((r) => server.listen(0, r));
 const site = `http://localhost:${server.address().port}`;
 
 const ext = resolve('dist');
-// Extensions need full Chromium; Playwright's default headless shell can't load them.
+// BROWSER=msedge runs the same checks in Microsoft Edge. Otherwise use full
+// Chromium: Playwright's default headless shell can't load extensions.
 const executablePath = process.env.CHROMIUM_PATH || (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined);
+const launch = process.env.BROWSER === 'msedge' ? { channel: 'msedge' } : executablePath ? { executablePath } : { channel: 'chromium' };
+console.log('browser:', launch.channel ?? launch.executablePath);
 const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'ljt-')), {
-  ...(executablePath ? { executablePath } : { channel: 'chromium' }),
+  ...launch,
   headless: true,
   args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`],
   viewport: { width: 760, height: 900 },
