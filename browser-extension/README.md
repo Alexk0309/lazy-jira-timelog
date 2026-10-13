@@ -1,6 +1,6 @@
-# Lazy Jira Timelog for Chrome
+# Lazy Jira Timelog for Chrome and Edge
 
-A Chrome extension that notices the time you spend on anything tied to a Jira issue, like the issue itself, a pull request or a design doc. At the end of the day it hands you a ready-made list of worklogs to send to Jira in one click. There's no timer, no server and no chat bot.
+A browser extension for Google Chrome and Microsoft Edge that notices the time you spend on anything tied to a Jira issue, like the issue itself, a pull request or a design doc. At the end of the day it hands you a ready-made list of worklogs to send to Jira in one click. There's no timer, no server and no chat bot.
 
 ## What it does
 
@@ -17,13 +17,15 @@ A Chrome extension that notices the time you spend on anything tied to a Jira is
 ## Install (pilot)
 
 1. Download `lazy-jira-timelog-browser-<version>.zip` and unzip it.
-2. Open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the unzipped folder.
+2. Open the extensions page, turn on **Developer mode**, click **Load unpacked** and pick the unzipped folder.
+   - Chrome: `chrome://extensions` (Developer mode is the switch at the top right).
+   - Edge: `edge://extensions` (Developer mode is the switch in the left sidebar). The same zip works in both.
 3. Settings opens automatically. Enter your Jira site, e.g. `https://your-team.atlassian.net`, and click **Test connection**.
    - **Browser** sign-in (default) reuses the Jira session you're already logged in to, so no token is needed.
    - **API token** is the fallback if your company blocks that. Create one at id.atlassian.com → Security → API tokens.
-4. Self-hosted GitLab or another tool? Add its domain under **Sites**. Chrome will ask you to allow it.
+4. Self-hosted GitLab or another tool? Add its domain under **Sites**. The browser will ask you to allow it.
 
-For a team rollout, publish it as an unlisted item on the Chrome Web Store, or push it with Google Admin, so updates arrive automatically.
+For a team rollout, publish the same zip as an unlisted item on the Chrome Web Store and a hidden listing on Microsoft Edge Add-ons, or push it with Google Admin or Intune, so updates arrive automatically.
 
 ## Development
 
@@ -32,6 +34,7 @@ cd browser-extension
 npm install
 npm test        # unit tests
 npm run e2e     # loads the built extension in Chromium against a fake Jira and logs time end to end
+BROWSER=msedge npm run e2e  # the same check in Microsoft Edge (npx playwright install msedge)
 npm run build   # outputs dist/ (load it unpacked)
 npm run package # typecheck, test, production build, zip
 ```

@@ -119,7 +119,7 @@ function showResult(text: string, level: string): void {
   result.className = `note ${level === 'ok' ? '' : level}`;
 }
 
-/** Self-hosted Jira or GitLab needs explicit access; Chrome shows its own prompt. */
+/** Self-hosted Jira or GitLab needs explicit access; the browser shows its own prompt. */
 async function ensureHostAccess(url: string): Promise<boolean> {
   let origin: string;
   try {

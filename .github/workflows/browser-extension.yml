@@ -14,6 +14,11 @@ defaults:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, msedge]
+    name: build (${{ matrix.browser }})
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,9 +28,15 @@ jobs:
           cache-dependency-path: browser-extension/package-lock.json
       - run: npm ci
       - run: npm run package
-      - run: npx playwright install --with-deps --no-shell chromium
+      - if: matrix.browser == 'chromium'
+        run: npx playwright install --with-deps --no-shell chromium
+      - if: matrix.browser == 'msedge'
+        run: npx playwright install --with-deps msedge
       - run: npm run e2e
-      - uses: actions/upload-artifact@v4
+        env:
+          BROWSER: ${{ matrix.browser }}
+      - if: matrix.browser == 'chromium'
+        uses: actions/upload-artifact@v4
         with:
           name: browser-extension
           path: browser-extension/*.zip
