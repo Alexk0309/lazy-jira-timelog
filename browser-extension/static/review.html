@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timelog</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page">
+    <header class="top">
+      <div>
+        <p class="eyebrow" id="date"></p>
+        <h1 class="hero" id="total">&nbsp;</h1>
+        <div class="status" id="status"><span class="dot"></span><span id="status-text">Not tracking</span></div>
+      </div>
+      <div class="icon-buttons">
+        <button class="icon-button" id="expand" title="Open in a tab" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M10 14 20 4M20 14v6H4V4h6"/></svg>
+        </button>
+        <button class="icon-button" id="settings" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div id="setup" class="card" hidden>
+      <h2>Connect Jira</h2>
+      <p id="setup-text"></p>
+      <div><button class="btn btn-primary" id="setup-button">Open Settings</button></div>
+    </div>
+
+    <div id="empty" class="empty" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m8 12.5 2.8 2.8L16.5 9.5"/></svg>
+      <h2>You're all caught up</h2>
+      <p>Time spent on Jira issues, pull requests and linked pages shows up here.</p>
+    </div>
+
+    <main id="days"></main>
+  </div>
+
+  <div class="bottom-bar" id="bottom" hidden>
+    <button class="btn btn-primary" id="log-all">Log all</button>
+    <p class="bottom-hint" id="bottom-hint" hidden></p>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+  <script type="module" src="review.js"></script>
+</body>
+</html>

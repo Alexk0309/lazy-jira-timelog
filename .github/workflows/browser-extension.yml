@@ -1,0 +1,31 @@
+name: Browser extension
+
+on:
+  push:
+    branches: [main]
+    paths: ['browser-extension/**', '.github/workflows/browser-extension.yml']
+  pull_request:
+    paths: ['browser-extension/**', '.github/workflows/browser-extension.yml']
+
+defaults:
+  run:
+    working-directory: browser-extension
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: browser-extension/package-lock.json
+      - run: npm ci
+      - run: npm run package
+      - run: npx playwright install --with-deps --no-shell chromium
+      - run: npm run e2e
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-extension
+          path: browser-extension/*.zip

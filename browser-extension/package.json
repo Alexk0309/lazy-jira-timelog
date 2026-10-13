@@ -1,0 +1,22 @@
+{
+  "name": "lazy-jira-timelog-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension that notices time spent on Jira-linked tabs and turns it into worklogs you confirm in one click.",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "package": "npm run typecheck && npm test && node scripts/build.mjs --production && node scripts/zip.mjs",
+    "e2e": "node scripts/build.mjs --test-hosts && node scripts/e2e.mjs"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "esbuild": "^0.25.0",
+    "playwright": "^1.56.1",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.0"
+  }
+}
