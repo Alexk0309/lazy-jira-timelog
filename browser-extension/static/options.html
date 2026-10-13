@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timelog Settings</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page">
+    <header class="top">
+      <div>
+        <p class="eyebrow">Lazy Jira Timelog</p>
+        <h1 class="hero">Settings</h1>
+      </div>
+    </header>
+
+    <h2 class="section-title">Jira</h2>
+    <div class="group">
+      <label class="setting">
+        <span class="setting-label">Site</span>
+        <input id="siteUrl" class="wide" type="url" placeholder="https://your-team.atlassian.net" autocomplete="off">
+      </label>
+      <div class="setting">
+        <span class="setting-label">Sign in with<small id="auth-help">Uses the Jira session already open in this browser.</small></span>
+        <div class="segmented" role="group" aria-label="Sign-in method">
+          <button type="button" id="auth-session" aria-pressed="true">Browser</button>
+          <button type="button" id="auth-token" aria-pressed="false">API token</button>
+        </div>
+      </div>
+      <label class="setting token-only" hidden>
+        <span class="setting-label">Email</span>
+        <input id="email" class="wide" type="email" placeholder="you@company.com" autocomplete="off">
+      </label>
+      <label class="setting token-only" hidden>
+        <span class="setting-label">API token</span>
+        <input id="apiToken" class="wide" type="password" placeholder="Paste token" autocomplete="off">
+      </label>
+    </div>
+    <p class="footnote token-only" hidden>Create a token at id.atlassian.com → Security → API tokens. It stays on this computer.</p>
+    <div class="actions" style="margin: 12px 4px 0">
+      <button class="btn btn-tinted" id="connect">Test connection</button>
+      <span class="note" id="connect-result"></span>
+    </div>
+
+    <h2 class="section-title">Daily rhythm</h2>
+    <div class="group">
+      <label class="setting">
+        <span class="setting-label">Reminder<small>One gentle notification, only if something is unlogged.</small></span>
+        <input id="reminderTime" type="time">
+      </label>
+      <div class="setting">
+        <span class="setting-label">Round to</span>
+        <div class="segmented" role="group" aria-label="Rounding" id="rounding">
+          <button type="button" data-value="5">5 min</button>
+          <button type="button" data-value="15">15 min</button>
+          <button type="button" data-value="30">30 min</button>
+        </div>
+      </div>
+      <label class="setting">
+        <span class="setting-label">Idle after<small>Minutes without activity before time stops counting.</small></span>
+        <select id="idleMinutes">
+          <option value="5">5 min</option>
+          <option value="10">10 min</option>
+          <option value="15">15 min</option>
+          <option value="30">30 min</option>
+        </select>
+      </label>
+      <label class="setting">
+        <span class="setting-label">Ignore sessions under</span>
+        <select id="minSessionMinutes">
+          <option value="0">Keep all</option>
+          <option value="2">2 min</option>
+          <option value="5">5 min</option>
+          <option value="10">10 min</option>
+        </select>
+      </label>
+    </div>
+
+    <h2 class="section-title">Sites</h2>
+    <div class="group">
+      <div class="setting">
+        <span class="setting-label">Jira, GitHub, GitLab and Bitbucket<small>Always on. Only tabs that mention a Jira issue count.</small></span>
+      </div>
+      <div class="setting">
+        <input id="extraSite" class="wide" type="text" placeholder="Add a site, e.g. gitlab.company.com" style="text-align:left">
+        <button class="btn btn-plain" id="addSite">Allow</button>
+      </div>
+    </div>
+    <p class="footnote" id="sites-note">Only the issue key and the site name are stored, never page addresses or browsing history.</p>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>
