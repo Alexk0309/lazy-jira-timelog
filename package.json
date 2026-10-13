@@ -1,0 +1,128 @@
+{
+  "name": "lazy-jira-timelog",
+  "displayName": "Lazy Jira Timelog",
+  "description": "Tracks coding time per git branch in Cursor / VS Code and turns it into Jira worklogs you confirm in one click.",
+  "version": "0.1.0",
+  "publisher": "lazy-jira-timelog",
+  "private": true,
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Alexk0309/lazy-jira-timelog"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "extensionDependencies": [
+    "vscode.git"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "lazyJiraTimelog.openReview",
+        "title": "Review and log time",
+        "category": "Jira Timelog"
+      },
+      {
+        "command": "lazyJiraTimelog.setApiToken",
+        "title": "Set Jira API token",
+        "category": "Jira Timelog"
+      },
+      {
+        "command": "lazyJiraTimelog.clearApiToken",
+        "title": "Clear Jira API token",
+        "category": "Jira Timelog"
+      },
+      {
+        "command": "lazyJiraTimelog.testConnection",
+        "title": "Test Jira connection",
+        "category": "Jira Timelog"
+      },
+      {
+        "command": "lazyJiraTimelog.showCurrentIssue",
+        "title": "Show which issue time is going to",
+        "category": "Jira Timelog"
+      }
+    ],
+    "configuration": {
+      "title": "Lazy Jira Timelog",
+      "properties": {
+        "lazyJiraTimelog.siteUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Your Jira Cloud site, e.g. `https://your-team.atlassian.net`.",
+          "scope": "application"
+        },
+        "lazyJiraTimelog.email": {
+          "type": "string",
+          "default": "",
+          "description": "The email address of your Atlassian account (used with your API token).",
+          "scope": "application"
+        },
+        "lazyJiraTimelog.defaultIssue": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Issue key used for branches without a Jira key in their name or commits, e.g. `OPS-12`. Set it in a repo's workspace settings to make it per-repo. Leave empty to collect that time as **Unassigned**.",
+          "scope": "resource"
+        },
+        "lazyJiraTimelog.idleMinutes": {
+          "type": "number",
+          "default": 15,
+          "minimum": 1,
+          "description": "A gap with no activity longer than this ends a session.",
+          "scope": "application"
+        },
+        "lazyJiraTimelog.roundMinutes": {
+          "type": "number",
+          "default": 15,
+          "minimum": 1,
+          "description": "Worklog durations are rounded to the nearest multiple of this many minutes.",
+          "scope": "application"
+        },
+        "lazyJiraTimelog.minSessionMinutes": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "description": "Sessions shorter than this are dropped.",
+          "scope": "application"
+        },
+        "lazyJiraTimelog.reminderTime": {
+          "type": "string",
+          "default": "17:30",
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$|^$",
+          "description": "Local time (HH:MM) for the daily reminder to log time. Leave empty to turn the notification off.",
+          "scope": "application"
+        },
+        "lazyJiraTimelog.retentionDays": {
+          "type": "number",
+          "default": 30,
+          "minimum": 7,
+          "description": "Raw activity older than this many days is deleted.",
+          "scope": "application"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "package": "npm run typecheck && npm test && npm run build -- --production && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "1.90.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.0"
+  }
+}
