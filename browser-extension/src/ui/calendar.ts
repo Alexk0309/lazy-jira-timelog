@@ -1,7 +1,8 @@
+import { adjustEstimate, estimateProgress } from '../core/estimate';
 import { dayStart, formatDuration, localDay, parseDuration } from '../core/time';
 import type { LoggedWork } from '../jira';
 import { call } from '../messages';
-import { el, toast } from './dom';
+import { el, estimateBar, ticketHeading, toast } from './dom';
 import { goTo, mountTabs } from './nav';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -164,8 +165,9 @@ function renderLog(log: LoggedWork): HTMLElement {
     el(
       'div',
       { class: 'row-text' },
-      el('div', { class: 'row-key' }, log.key),
-      el('div', { class: 'row-sub' }, `${clock(log.started)} · ${log.comment.split('\n')[0] || log.summary}`),
+      ticketHeading(log.key, log.summary),
+      el('div', { class: 'row-sub' }, [clock(log.started), log.comment.split('\n')[0]].filter(Boolean).join(' · ')),
+      estimateBar(estimateProgress(log.estimate), log.key),
     ),
     el('span', { class: 'row-time' }, formatDuration(log.seconds * 1000)),
     chevron(),
@@ -219,6 +221,7 @@ function renderEditor(log: LoggedWork): HTMLElement {
     try {
       await call('deleteWorklog', { key: log.key, id: log.id });
       logs = logs.filter((l) => l !== log);
+      adjustLocally(log.key, -log.seconds);
       openId = null;
       confirmDeleteId = null;
       render();
@@ -244,6 +247,7 @@ function renderEditor(log: LoggedWork): HTMLElement {
     save.disabled = true;
     try {
       await call('editWorklog', { key: log.key, id: log.id, started, duration: duration.value, comment: comment.value });
+      adjustLocally(log.key, seconds - log.seconds);
       Object.assign(log, { started, seconds, comment: comment.value.trim() });
       openId = null;
       render();
@@ -265,7 +269,6 @@ function renderEditor(log: LoggedWork): HTMLElement {
   return el(
     'div',
     { class: 'editor' },
-    el('div', { class: 'row-sub' }, log.summary),
     el('div', { class: 'field-row' }, start, el('div', { class: 'stepper' }, minus, duration, plus)),
     comment,
     note,
@@ -330,4 +333,13 @@ function chevron(): SVGElement {
   path.setAttribute('d', 'm9 6 6 6-6 6');
   svg.append(path);
   return svg;
+}
+
+/** Keeps the estimate bars in step with an edit or delete without reloading the month. */
+function adjustLocally(key: string, deltaSeconds: number): void {
+  for (const l of logs) {
+    if (l.key === key && l.estimate) {
+      l.estimate = adjustEstimate(l.estimate, deltaSeconds);
+    }
+  }
 }

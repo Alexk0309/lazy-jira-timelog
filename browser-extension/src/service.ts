@@ -5,6 +5,7 @@ import { buildDrafts, totalUnloggedMs } from './core/drafts';
 import { shouldRemind } from './core/reminder';
 import { buildSessions } from './core/sessions';
 import { dayEnd, dayStart, localDay, parseClock, parseDuration } from './core/time';
+import type { Estimate } from './core/estimate';
 import type { Draft } from './core/types';
 import { extractIssueKey, extractIssueKeys } from './core/issueKey';
 import { CURSOR_API, CursorClient } from './cursor';
@@ -34,6 +35,12 @@ export interface WorklogEdit {
   started: number;
   duration: string;
   comment: string;
+}
+
+/** What the review and calendar show next to an issue key. */
+export interface IssueInfo {
+  summary: string;
+  estimate?: Estimate;
 }
 
 export interface ReviewState {
@@ -366,6 +373,35 @@ export class Service {
       }
       if (this.summaries.has(key)) {
         result[key] = this.summaries.get(key) ?? null;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Title and time tracking of each issue, read fresh so estimates reflect what
+   * was just logged. Keys Jira doesn't know map to null; on errors keys are left out.
+   */
+  async issues(keys: string[]): Promise<Record<string, IssueInfo | null>> {
+    const wanted = [...new Set(keys.map((k) => issueKeyOf(k)).filter((k): k is string => !!k))];
+    const client = await this.client();
+    if (wanted.length === 0 || typeof client === 'string') {
+      return {};
+    }
+    let details: list.TicketDetails[];
+    try {
+      details = await client.ticketDetails(wanted);
+    } catch {
+      return {};
+    }
+    const result: Record<string, IssueInfo | null> = Object.fromEntries(wanted.map((k) => [k, null]));
+    for (const d of details) {
+      this.summaries.set(d.key, d.summary);
+      result[d.key] = { summary: d.summary, ...(d.estimate ? { estimate: d.estimate } : {}) };
+    }
+    for (const key of wanted) {
+      if (result[key] === null) {
+        this.summaries.set(key, null);
       }
     }
     return result;

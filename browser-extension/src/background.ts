@@ -111,6 +111,7 @@ const handlers: Handlers = {
   },
   search: (p) => service.search(p.query),
   summaries: (p) => service.issueSummaries(p.keys),
+  issues: (p) => service.issues(p.keys),
   manualLogs: (p) => service.manualLogs(p.items),
   suggestions: () => service.suggestions(),
   getSettings: () => store.settings(),

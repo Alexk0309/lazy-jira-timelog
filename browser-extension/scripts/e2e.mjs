@@ -14,9 +14,9 @@ const edits = [];
 
 // Issues the fake Jira knows, with what the ticket list shows. PAY-9, OPS-13, PAY-11 and PAY-12 are sub-tasks.
 const issues = {
-  'PAY-7': { summary: 'Refund flow for card payments', created: '2026-09-01T09:00:00.000+0000' },
-  'PAY-8': { summary: 'Payout reports for finance', created: '2026-09-05T09:00:00.000+0000' },
-  'PAY-9': { summary: 'Payout CSV export for finance', created: '2026-09-10T09:00:00.000+0000', parent: 'PAY-8', type: 'Sub-task' },
+  'PAY-7': { summary: 'Refund flow for card payments', created: '2026-09-01T09:00:00.000+0000', estimate: 4 * 3600, spent: 3600 },
+  'PAY-8': { summary: 'Payout reports for finance', created: '2026-09-05T09:00:00.000+0000', estimate: 2 * 3600, spent: 5400 },
+  'PAY-9': { summary: 'Payout CSV export for finance', created: '2026-09-10T09:00:00.000+0000', parent: 'PAY-8', type: 'Sub-task', estimate: 3600, spent: 0 },
   'OPS-12': { summary: 'Rotate staging credentials', created: '2026-09-20T09:00:00.000+0000' },
   'OPS-13': { summary: 'Rotate the payout service key', created: '2026-09-25T09:00:00.000+0000', parent: 'OPS-12', type: 'Sub-task' },
   'PAY-10': { summary: 'Payouts in euros', created: '2026-09-26T09:00:00.000+0000', type: 'Epic' },
@@ -33,8 +33,17 @@ const issueJson = (key) => {
       issuetype: { name: i.type ?? 'Story' },
       created: i.created,
       ...(i.parent ? { parent: { key: i.parent, fields: { summary: issues[i.parent].summary } } } : {}),
+      timetracking: timetracking(key),
     },
   };
+};
+
+// Time tracking as Jira keeps it: what was logged before, plus worklogs posted here, against the estimate.
+const timetracking = (key) => {
+  const i = issues[key];
+  if (!i?.estimate) return {};
+  const spent = (i.spent ?? 0) + posted.filter((w) => w.key === key && !w.deleted).reduce((sum, w) => sum + w.timeSpentSeconds, 0);
+  return { originalEstimateSeconds: i.estimate, remainingEstimateSeconds: Math.max(0, i.estimate - spent), timeSpentSeconds: spent };
 };
 
 const server = createServer((req, res) => {
@@ -95,7 +104,7 @@ const server = createServer((req, res) => {
     }
     if (p === '/rest/api/3/search/jql' && JSON.parse(body).jql.startsWith('worklogAuthor = currentUser()')) {
       const keys = [...new Set(posted.filter((w) => !w.deleted).map((w) => w.key))];
-      return send({ issues: keys.map((key) => ({ key, fields: { summary: `Summary of ${key}` } })), isLast: true });
+      return send({ issues: keys.map((key) => ({ key, fields: { summary: issues[key]?.summary ?? `Summary of ${key}`, timetracking: timetracking(key) } })), isLast: true });
     }
     if (p === '/rest/api/3/search/jql') return send({ issues: [{ key: 'OPS-12', fields: { summary: 'Rotate staging credentials' } }] });
     if (p === '/rest/api/3/issue/picker') return send({ sections: [{ issues: [{ key: 'OPS-12', summaryText: 'Rotate staging credentials' }] }] });
@@ -121,8 +130,8 @@ const server = createServer((req, res) => {
       const key = p.split('/')[5];
       return send({ worklogs: posted.filter((w) => w.key === key && !w.deleted).map((w) => ({ ...w, author: { accountId: 'me' } })) });
     }
-    if (p === '/rest/api/3/issue/PAY-7') return send({ key: 'PAY-7', fields: { summary: 'Refund flow for card payments' } });
-    if (p === '/rest/api/3/issue/PAY-8') return send({ key: 'PAY-8', fields: { summary: 'Payout reports for finance' } });
+    const single = /^\/rest\/api\/3\/issue\/([A-Z]+-\d+)$/.exec(p);
+    if (single && issues[single[1]]) return send(issueJson(single[1]));
     send({ errorMessages: ['not found'] }, 404);
   });
 });
@@ -211,16 +220,22 @@ try {
   await review.goto(page('review.html'));
   await review.waitForSelector('.row');
   await review.waitForTimeout(500);
-  const rows = await review.$$eval('.row', (rs) => rs.map((r) => r.querySelector('.row-key').textContent + ' ' + r.querySelector('.row-time').textContent));
+  const rows = await review.$$eval('.row', (rs) => rs.map((r) => r.querySelector('.row-key > .key').textContent + ' ' + r.querySelector('.row-time').textContent));
   console.log('review rows:', rows.join(' | '));
+  const heading = (pg, key) => pg.$eval(`.row:has(.row-key > .key:text-is("${key}"))`, (r) => [r.querySelector('.row-title')?.textContent ?? '', r.querySelector('.estimate-label')?.textContent ?? 'no bar']);
+  const pay7 = await heading(review, 'PAY-7');
+  console.log('PAY-7 heading:', pay7.join(' · '), '· OPS-12:', (await heading(review, 'OPS-12')).join(' · '));
+  if (pay7[0] !== 'Refund flow for card payments' || pay7[1] !== '1h + 1h of 4h') fail('review row is missing the title or the estimate with pending time');
+  if ((await heading(review, 'OPS-12'))[1] !== 'no bar') fail('a ticket without an estimate shows a bar');
   if (shots) await review.screenshot({ path: join(shots, 'review.png'), fullPage: true });
 
   // Open the PAY-7 row, bump it 15 minutes, log it.
-  await review.click('.row:has(.row-key:text-is("PAY-7")) .row-main');
+  await review.click('.row:has(.row-key > .key:text-is("PAY-7")) .row-main');
   if (shots) await review.screenshot({ path: join(shots, 'review-open.png'), fullPage: true });
   await review.click('.row.open .stepper button:last-child');
   await review.click('.row.open .btn-primary');
   await review.waitForSelector('.row.done');
+  await review.waitForFunction(() => document.querySelector('.row.done .estimate-label')?.textContent === '2h 15m of 4h');
   console.log('posted:', JSON.stringify(posted));
   if (posted.length !== 1 || posted[0].timeSpentSeconds !== 4500 || posted[0].xsrf !== 'no-check') fail('unexpected worklog post');
 
@@ -303,7 +318,7 @@ try {
   await review.click('.ai-button');
   await review.click('.ai-composer .btn-primary');
   await review.waitForSelector('.note.ai', { timeout: 15000 });
-  const matched = await review.$eval('.row:has(.note.ai)', (r) => `${r.querySelector('.row-key').textContent}: ${r.querySelector('.note').textContent}`);
+  const matched = await review.$eval('.row:has(.note.ai)', (r) => `${r.querySelector('.row-key > .key').textContent}: ${r.querySelector('.note').textContent}`);
   console.log('AI match:', matched);
   const prompt = cursorCalls[0]?.body.prompt.text ?? '';
   if (cursorCalls[0]?.auth !== 'Bearer cur_test') fail('Cursor call missing the bearer key');
@@ -329,7 +344,7 @@ try {
   await review.click('.ai-composer .btn-primary');
   await review.waitForFunction(() => document.querySelectorAll('.note.ai').length >= 2, null, { timeout: 15000 });
   const added = await review.$$eval('.row', (rs) =>
-    rs.filter((r) => /Added from your summary/.test(r.textContent)).map((r) => `${r.querySelector('.row-key').textContent} ${r.querySelector('.row-time').textContent}`),
+    rs.filter((r) => /Added from your summary/.test(r.textContent)).map((r) => `${r.querySelector('.row-key > .key').textContent} ${r.querySelector('.row-time').textContent}`),
   );
   console.log('AI added from summary:', added.join(' | '));
   if (!cursorCalls.at(-2)?.body?.prompt.text.includes('"personSummary": "Demoed payout reports')) fail('summary was not sent to Cursor');
@@ -345,20 +360,20 @@ try {
   if (askOptions.join('|') !== 'OPS-12|OPS-13') fail('question options should be OPS-12 and OPS-13 only');
   if (shots) await review.screenshot({ path: join(shots, 'review-question.png'), fullPage: true });
   await review.click('.ask-option:has-text("OPS-13")');
-  await review.waitForSelector('.row:has(.row-key:text-is("OPS-13"))');
+  await review.waitForSelector('.row:has(.row-key > .key:text-is("OPS-13"))');
   if (await review.$('.ask')) fail('question did not close after answering');
   const answers = await worker.evaluate(async () => (await chrome.storage.local.get('ai')).ai.answers);
   if (answers?.[0] !== 'OPS-13') fail('answer was not remembered');
   // The issue picker offers your list first, flagged tickets on top.
-  await review.click('.row:has(.row-key:text-is("OPS-13")) .row-main');
+  await review.click('.row:has(.row-key > .key:text-is("OPS-13")) .row-main');
   await review.fill('.row.open .search input', '');
   await review.waitForSelector('.row.open .results li');
   const picks = await review.$$eval('.row.open .results li strong', (ls) => ls.map((l) => l.textContent));
   console.log('picker before typing:', picks.join(', '));
   if (picks[0] !== 'PAY-7' || picks[1] !== 'OPS-12') fail('picker should start with flagged tickets from your list');
   await review.fill('.row.open .search input', 'OPS-13');
-  await review.click('.row:has(.row-key:text-is("OPS-13")) .row-main');
-  await review.click('.row:has(.row-key:text-is("PAY-8")):has(.note.ai) .row-main');
+  await review.click('.row:has(.row-key > .key:text-is("OPS-13")) .row-main');
+  await review.click('.row:has(.row-key > .key:text-is("PAY-8")):has(.note.ai) .row-main');
   await review.click('.row.open .btn-primary');
   await review.waitForFunction(() => !document.querySelector('.row.open'));
   const demo = posted.find((p) => p.key === 'PAY-8');
@@ -369,17 +384,20 @@ try {
   const cal = await context.newPage();
   await cal.goto(page('calendar.html'));
   await cal.waitForSelector('#day .row', { timeout: 10000 });
-  const logged = await cal.$$eval('#day .row', (rs) => rs.map((r) => `${r.querySelector('.row-key').textContent} ${r.querySelector('.row-time').textContent}`));
+  const logged = await cal.$$eval('#day .row', (rs) => rs.map((r) => `${r.querySelector('.row-key > .key').textContent} ${r.querySelector('.row-time').textContent}`));
   console.log('calendar day:', logged.join(' | '), '· month:', await cal.textContent('#month-total'));
   if (logged.length !== 3) fail('calendar should list the three worklogs logged today');
   if (shots) await cal.screenshot({ path: join(shots, 'calendar.png'), fullPage: true });
-  await cal.click('#day .row:has(.row-key:text-is("PAY-7")) .row-main');
+  const pay8 = await heading(cal, 'PAY-8');
+  console.log('calendar PAY-8 heading:', pay8.join(' · '));
+  if (pay8[0] !== 'Payout reports for finance' || !(await cal.$('#day .estimate.over'))) fail('calendar row is missing the title or the over-estimate bar');
+  await cal.click('#day .row:has(.row-key > .key:text-is("PAY-7")) .row-main');
   await cal.fill('.row.open .duration', '1h');
   await cal.fill('.row.open textarea', 'Card refunds, edited');
   if (shots) await cal.screenshot({ path: join(shots, 'calendar-edit.png'), fullPage: true });
   await cal.click('.row.open .btn-primary');
   await cal.waitForFunction(() => !document.querySelector('.row.open'));
-  await cal.click('#day .row:has(.row-key:text-is("PAY-9")) .row-main');
+  await cal.click('#day .row:has(.row-key > .key:text-is("PAY-9")) .row-main');
   await cal.click('.row.open .btn-danger');
   await cal.click('.row.open .btn-danger');
   await cal.waitForFunction(() => document.querySelectorAll('#day .row').length === 2);
@@ -389,7 +407,7 @@ try {
   if (!edits.some((e) => e.method === 'DELETE' && e.key === 'PAY-9')) fail('calendar delete did not reach Jira');
   await cal.reload();
   await cal.waitForSelector('#day .row');
-  const after = await cal.$$eval('#day .row', (rs) => rs.map((r) => `${r.querySelector('.row-key').textContent} ${r.querySelector('.row-time').textContent}`));
+  const after = await cal.$$eval('#day .row', (rs) => rs.map((r) => `${r.querySelector('.row-key > .key').textContent} ${r.querySelector('.row-time').textContent}`));
   console.log('calendar after reload:', after.join(' | '));
   if (after.join('|') !== 'PAY-7 1h|PAY-8 45m') fail('calendar does not show the edits after reload');
   if (shots) {
