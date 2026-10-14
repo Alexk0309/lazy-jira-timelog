@@ -30,6 +30,8 @@ export interface TicketList {
 export interface TicketNode {
   ticket: Ticket;
   children: TicketNode[];
+  /** A parent that isn't on the list itself, shown only to group its sub-tickets. */
+  placeholder?: true;
 }
 
 /** Most tickets the list keeps, so storage and the AI prompt stay small. */
@@ -91,18 +93,47 @@ export function sortByCreated(list: TicketList): TicketList {
 }
 
 /**
- * Nests each ticket under its parent when the parent is on the list too, at
- * any depth (epic, story, sub-task). Order within each level follows the list.
+ * Nests each ticket under its parent, at any depth (epic, story, sub-task).
+ * A parent that isn't on the list still heads a group for its sub-tickets, in
+ * the place of its first one. Order within each level follows the list.
  */
 export function groupTickets(tickets: Ticket[]): TicketNode[] {
   const keys = new Set(tickets.map((t) => t.key));
   const nodes = new Map(tickets.map((t) => [t.key, { ticket: t, children: [] as TicketNode[] }]));
+  const groups = new Map<string, TicketNode>();
   const roots: TicketNode[] = [];
   for (const ticket of tickets) {
-    const parent = ticket.parentKey && keys.has(ticket.parentKey) && !isAncestor(ticket.key, ticket.parentKey, tickets) ? ticket.parentKey : null;
-    (parent ? nodes.get(parent)!.children : roots).push(nodes.get(ticket.key)!);
+    const node = nodes.get(ticket.key)!;
+    if (!ticket.parentKey) {
+      roots.push(node);
+    } else if (!keys.has(ticket.parentKey)) {
+      let group = groups.get(ticket.parentKey);
+      if (!group) {
+        group = { ticket: parentPlaceholder(ticket), children: [], placeholder: true };
+        groups.set(ticket.parentKey, group);
+        roots.push(group);
+      }
+      group.children.push(node);
+    } else if (isAncestor(ticket.key, ticket.parentKey, tickets)) {
+      roots.push(node);
+    } else {
+      nodes.get(ticket.parentKey)!.children.push(node);
+    }
   }
   return roots;
+}
+
+function parentPlaceholder(child: Ticket): Ticket {
+  return {
+    key: child.parentKey!,
+    summary: child.parentSummary ?? '',
+    status: '',
+    statusCategory: '',
+    issueType: '',
+    created: 0,
+    flagged: false,
+    addedAt: 0,
+  };
 }
 
 /** True when `key` sits somewhere above `start` in the parent chain, which would make a loop. */
@@ -118,9 +149,9 @@ function isAncestor(key: string, start: string, tickets: Ticket[]): boolean {
   return false;
 }
 
-/** Keys in the order the grouped list shows them, parents before their sub-tickets. */
+/** Keys of listed tickets in the order the grouped list shows them, parents before their sub-tickets. */
 export function flattenKeys(nodes: TicketNode[]): string[] {
-  return nodes.flatMap((n) => [n.ticket.key, ...flattenKeys(n.children)]);
+  return nodes.flatMap((n) => [...(n.placeholder ? [] : [n.ticket.key]), ...flattenKeys(n.children)]);
 }
 
 /** Tickets for AI matching: flagged first, then the rest, each in your list order. */

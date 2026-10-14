@@ -7,6 +7,7 @@ import type { Draft } from '../core/types';
 import type { IssueSummary } from '../jira';
 import { call } from '../messages';
 import { el, toast } from './dom';
+import { goTo, mountTabs } from './nav';
 
 interface Row {
   id: string;
@@ -27,8 +28,7 @@ interface Row {
   note?: { text: string; level: 'warn' | 'error' | 'ok' | 'ai' };
 }
 
-const isPopup = new URLSearchParams(location.search).has('popup');
-document.body.classList.toggle('popup', isPopup);
+mountTabs('review.html');
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const daysEl = $('days');
@@ -50,26 +50,7 @@ let saved: Ticket[] = [];
 /** Saved AI suggestions older than this aren't re-applied when the popup opens. */
 const AI_FRESH_MS = 12 * 3_600_000;
 
-$('settings').addEventListener('click', () => chrome.runtime.openOptionsPage());
-$('tickets').addEventListener('click', () => {
-  void chrome.tabs.create({ url: chrome.runtime.getURL('tickets.html') });
-  if (isPopup) {
-    window.close();
-  }
-});
-$('calendar').addEventListener('click', () => {
-  void chrome.tabs.create({ url: chrome.runtime.getURL('calendar.html') });
-  if (isPopup) {
-    window.close();
-  }
-});
-$('setup-button').addEventListener('click', () => chrome.runtime.openOptionsPage());
-const expand = $('expand');
-expand.hidden = !isPopup;
-expand.addEventListener('click', () => {
-  void chrome.tabs.create({ url: chrome.runtime.getURL('review.html') });
-  window.close();
-});
+$('setup-button').addEventListener('click', () => goTo('options.html'));
 $('log-all').addEventListener('click', () => void logAll());
 
 void load();

@@ -2,6 +2,7 @@ import { flattenKeys, groupTickets, type Ticket, type TicketList, type TicketNod
 import type { IssueSummary } from '../jira';
 import { call } from '../messages';
 import { el, toast } from './dom';
+import { goTo, mountTabs } from './nav';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const listEl = $('list');
@@ -12,9 +13,12 @@ let siteUrl = '';
 const selected = new Set<string>();
 /** Key being dragged, if any. */
 let dragging: string | null = null;
+const COLLAPSED_KEY = 'tickets.collapsed';
+/** Parents whose sub-tickets are hidden; remembered on this computer. */
+const collapsed = loadCollapsed();
 
-$('settings').addEventListener('click', () => chrome.runtime.openOptionsPage());
-$('setup-button').addEventListener('click', () => chrome.runtime.openOptionsPage());
+mountTabs('tickets.html');
+$('setup-button').addEventListener('click', () => goTo('options.html'));
 $('refresh').addEventListener('click', () => void run(() => call('refreshTickets'), 'Refreshed from Jira'));
 $('fetch-assigned').addEventListener('click', () => void fetchAssigned());
 $('sort').addEventListener('click', () => void run(() => call('sortTickets')));
@@ -225,23 +229,85 @@ function render(): void {
 }
 
 function renderNodes(nodes: TicketNode[], depth: number): HTMLElement[] {
-  return nodes.flatMap((n) => [renderTicket(n.ticket, depth), ...renderNodes(n.children, depth + 1)]);
+  return nodes.flatMap((n) => [
+    n.placeholder ? renderParent(n, depth) : renderTicket(n, depth),
+    ...(collapsed.has(n.ticket.key) ? [] : renderNodes(n.children, depth + 1)),
+  ]);
 }
 
-function renderTicket(t: Ticket, depth: number): HTMLElement {
+/** Heads the sub-tickets of a parent that isn't on the list; its checkbox selects them all. */
+function renderParent(node: TicketNode, depth: number): HTMLElement {
+  const t = node.ticket;
+  const row = el('div', { class: 'ticket parent', 'data-key': t.key, draggable: 'true', style: `--depth: ${depth}` });
+  const keys = flattenKeys(node.children);
+  const picked = keys.filter((k) => selected.has(k)).length;
+  const check = el('input', { type: 'checkbox', 'aria-label': `Select the sub-tickets of ${t.key}` }) as HTMLInputElement;
+  check.checked = picked > 0 && picked === keys.length;
+  check.indeterminate = picked > 0 && picked < keys.length;
+  check.addEventListener('change', () => {
+    for (const key of keys) {
+      if (check.checked) {
+        selected.add(key);
+      } else {
+        selected.delete(key);
+      }
+    }
+    render();
+  });
+  const link = el('a', { class: 'row-key', href: `${siteUrl}/browse/${t.key}`, target: '_blank', rel: 'noopener', draggable: 'false' }, t.key);
+  row.append(
+    handleFor(t.key),
+    check,
+    el('span', { class: 'flag-space', 'aria-hidden': 'true' }),
+    el(
+      'div',
+      { class: 'row-text' },
+      el('div', { class: 'ticket-head' }, link),
+      el('div', { class: 'row-sub' }, t.summary || '(no summary)'),
+      el('div', { class: 'ticket-meta' }, 'Parent, not on your list'),
+    ),
+    toggleFor(node),
+  );
+  makeDraggable(row, t.key);
+  return row;
+}
+
+/** Shows or hides a parent's sub-tickets. */
+function toggleFor(node: TicketNode): HTMLElement {
+  const key = node.ticket.key;
+  const count = node.children.length;
+  const open = !collapsed.has(key);
+  const button = el(
+    'button',
+    {
+      class: 'toggle',
+      type: 'button',
+      'aria-expanded': String(open),
+      'aria-label': `${open ? 'Hide' : 'Show'} ${count} ${count === 1 ? 'sub-ticket' : 'sub-tickets'} of ${key}`,
+    },
+    String(count),
+    svg('m6 9 6 6 6-6'),
+  );
+  button.addEventListener('click', () => {
+    if (collapsed.has(key)) {
+      collapsed.delete(key);
+    } else {
+      collapsed.add(key);
+    }
+    saveCollapsed();
+    render();
+    document.querySelector<HTMLElement>(`.ticket[data-key="${key}"] .toggle`)?.focus();
+  });
+  return button;
+}
+
+function renderTicket(node: TicketNode, depth: number): HTMLElement {
+  const t = node.ticket;
   const row = el('div', {
     class: `ticket${t.flagged ? ' flagged' : ''}${isDone(t) ? ' done' : ''}`,
     'data-key': t.key,
     draggable: 'true',
     style: `--depth: ${depth}`,
-  });
-
-  const handle = el('button', { class: 'handle', type: 'button', title: 'Drag to reorder', 'aria-label': `Move ${t.key}. Use the up and down arrow keys.` }, grip());
-  handle.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      void moveBy(t.key, e.key === 'ArrowUp' ? -1 : 1);
-    }
   });
 
   const check = el('input', { type: 'checkbox', 'aria-label': `Select ${t.key}` }) as HTMLInputElement;
@@ -259,13 +325,10 @@ function renderTicket(t: Ticket, depth: number): HTMLElement {
   flag.addEventListener('click', () => void run(() => call('flagTickets', { keys: [t.key], flagged: !t.flagged })));
 
   const meta = [t.issueType, t.created ? `created ${new Date(t.created).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}` : ''];
-  if (t.parentKey && !list.tickets.some((p) => p.key === t.parentKey)) {
-    meta.push(`in ${t.parentKey}${t.parentSummary ? ` ${t.parentSummary}` : ''}`);
-  }
   const link = el('a', { class: 'row-key', href: `${siteUrl}/browse/${t.key}`, target: '_blank', rel: 'noopener', draggable: 'false' }, t.key);
 
   row.append(
-    handle,
+    handleFor(t.key),
     check,
     flag,
     el(
@@ -275,12 +338,29 @@ function renderTicket(t: Ticket, depth: number): HTMLElement {
       el('div', { class: 'row-sub' }, t.summary || '(no summary)'),
       el('div', { class: 'ticket-meta' }, meta.filter(Boolean).join(' · ')),
     ),
+    node.children.length > 0 ? toggleFor(node) : '',
   );
+  makeDraggable(row, t.key);
+  return row;
+}
 
+function handleFor(key: string): HTMLElement {
+  const handle = el('button', { class: 'handle', type: 'button', title: 'Drag to reorder', 'aria-label': `Move ${key}. Use the up and down arrow keys.` }, grip());
+  handle.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      void moveBy(key, e.key === 'ArrowUp' ? -1 : 1);
+    }
+  });
+  return handle;
+}
+
+/** Drag a row to reorder it among its siblings; a parent brings its sub-tickets along. */
+function makeDraggable(row: HTMLElement, key: string): void {
   row.addEventListener('dragstart', (e) => {
-    dragging = t.key;
+    dragging = key;
     row.classList.add('dragging');
-    e.dataTransfer?.setData('text/plain', t.key);
+    e.dataTransfer?.setData('text/plain', key);
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'move';
     }
@@ -290,7 +370,7 @@ function renderTicket(t: Ticket, depth: number): HTMLElement {
     clearDropMarks();
   });
   row.addEventListener('dragover', (e) => {
-    if (!dragging || dragging === t.key || !sameSiblings(dragging, t.key)) {
+    if (!dragging || dragging === key || !sameSiblings(dragging, key)) {
       return;
     }
     e.preventDefault();
@@ -301,13 +381,12 @@ function renderTicket(t: Ticket, depth: number): HTMLElement {
   row.addEventListener('dragleave', () => row.classList.remove('drop-before', 'drop-after'));
   row.addEventListener('drop', (e) => {
     e.preventDefault();
-    const key = dragging;
+    const moved = dragging;
     clearDropMarks();
-    if (key && key !== t.key && sameSiblings(key, t.key)) {
-      void moveTo(key, t.key, isLowerHalf(e, row));
+    if (moved && moved !== key && sameSiblings(moved, key)) {
+      void moveTo(moved, key, isLowerHalf(e, row));
     }
   });
-  return row;
 }
 
 // ---------- Ordering ----------
@@ -375,6 +454,22 @@ function clearDropMarks(): void {
 }
 
 // ---------- Helpers ----------
+
+function loadCollapsed(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]') as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsed(): void {
+  try {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed]));
+  } catch {
+    // Storage blocked; the groups just open again next time.
+  }
+}
 
 function isDone(t: Ticket): boolean {
   return t.statusCategory === 'done';

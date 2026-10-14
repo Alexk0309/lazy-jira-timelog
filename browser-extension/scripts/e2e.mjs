@@ -12,13 +12,16 @@ const posted = [];
 const cursorCalls = [];
 const edits = [];
 
-// Issues the fake Jira knows, with what the ticket list shows. PAY-9 and OPS-13 are sub-tasks.
+// Issues the fake Jira knows, with what the ticket list shows. PAY-9, OPS-13, PAY-11 and PAY-12 are sub-tasks.
 const issues = {
   'PAY-7': { summary: 'Refund flow for card payments', created: '2026-09-01T09:00:00.000+0000' },
   'PAY-8': { summary: 'Payout reports for finance', created: '2026-09-05T09:00:00.000+0000' },
   'PAY-9': { summary: 'Payout CSV export for finance', created: '2026-09-10T09:00:00.000+0000', parent: 'PAY-8', type: 'Sub-task' },
   'OPS-12': { summary: 'Rotate staging credentials', created: '2026-09-20T09:00:00.000+0000' },
   'OPS-13': { summary: 'Rotate the payout service key', created: '2026-09-25T09:00:00.000+0000', parent: 'OPS-12', type: 'Sub-task' },
+  'PAY-10': { summary: 'Payouts in euros', created: '2026-09-26T09:00:00.000+0000', type: 'Epic' },
+  'PAY-11': { summary: 'Euro bank details form', created: '2026-09-27T09:00:00.000+0000', parent: 'PAY-10', type: 'Sub-task' },
+  'PAY-12': { summary: 'Euro payout fees', created: '2026-09-28T09:00:00.000+0000', parent: 'PAY-10', type: 'Sub-task' },
 };
 const issueJson = (key) => {
   const i = issues[key];
@@ -259,6 +262,26 @@ try {
   await tickets.reload();
   await tickets.waitForSelector('.ticket');
   if ((await shown()) !== 'PAY-7 PAY-8 PAY-9(sub) OPS-12 OPS-13(sub)') fail('ticket order lost after reload');
+
+  // Sub-tickets whose parent isn't on the list group under it, and the group collapses.
+  await tickets.click('#paste-toggle');
+  await tickets.fill('#paste-text', 'PAY-11 PAY-12');
+  await tickets.click('#paste-add');
+  await tickets.waitForSelector('.ticket.parent[data-key="PAY-10"]');
+  console.log('grouped by parent:', await shown());
+  if (!(await shown()).startsWith('PAY-10 PAY-12(sub) PAY-11(sub) ')) fail('sub-tickets were not grouped under their parent');
+  await tickets.check('.ticket.parent[data-key="PAY-10"] input[type=checkbox]');
+  if ((await tickets.textContent('#selection-count')) !== '2 selected') fail('parent checkbox did not select its sub-tickets');
+  await tickets.click('#sel-clear');
+  await tickets.click('.ticket[data-key="PAY-10"] .toggle');
+  await tickets.waitForFunction(() => !document.querySelector('.ticket[data-key="PAY-11"]'));
+  await tickets.reload();
+  await tickets.waitForSelector('.ticket.parent');
+  if ((await tickets.$('.ticket[data-key="PAY-11"]')) || (await tickets.getAttribute('.ticket[data-key="PAY-10"] .toggle', 'aria-expanded')) !== 'false') fail('collapsed group did not stay collapsed');
+  if (shots) await tickets.screenshot({ path: join(shots, 'tickets-collapsed.png'), fullPage: true });
+  await tickets.click('.ticket[data-key="PAY-10"] .toggle');
+  await tickets.waitForSelector('.ticket[data-key="PAY-11"]');
+  if (shots) await tickets.screenshot({ path: join(shots, 'tickets.png'), fullPage: true });
   if (shots) {
     await tickets.emulateMedia({ colorScheme: 'dark' });
     await tickets.screenshot({ path: join(shots, 'tickets-dark.png'), fullPage: true });
@@ -376,6 +399,34 @@ try {
   if (shots) await popup.screenshot({ path: join(shots, 'popup.png') });
   await popup.emulateMedia({ colorScheme: 'dark' });
   if (shots) await popup.screenshot({ path: join(shots, 'popup-dark.png') });
+  await popup.emulateMedia({ colorScheme: 'light' });
+
+  // Tabs switch views inside the popup without opening a browser tab.
+  const pagesBefore = context.pages().length;
+  for (const [label, file, ready] of [
+    ['Tickets', 'tickets.html', '#list'],
+    ['Calendar', 'calendar.html', '#cal .cal-day'],
+    ['Review', 'review.html', '#days'],
+  ]) {
+    await popup.click(`#tabs a:text-is("${label}")`);
+    await popup.waitForURL(`**/${file}?popup=1`);
+    await popup.waitForSelector(ready);
+    await popup.waitForTimeout(400);
+    const current = await popup.textContent('#tabs a[aria-current="page"]');
+    if (current !== label) fail(`popup tab bar marks ${current} instead of ${label}`);
+    if (!(await popup.evaluate(() => document.body.classList.contains('popup')))) fail(`${file} lost the popup layout`);
+    if (shots && label !== 'Review') await popup.screenshot({ path: join(shots, `popup-${label.toLowerCase()}.png`) });
+  }
+  if (context.pages().length !== pagesBefore) fail('switching popup tabs opened a new browser tab');
+  console.log('popup tabs: switched in place');
+
+  // In a full tab, Settings is a tab too.
+  await cal.bringToFront();
+  await cal.click('#tabs a:text-is("Settings")');
+  await cal.waitForURL('**/options.html');
+  await cal.click('#tabs a:text-is("Tickets")');
+  await cal.waitForURL('**/tickets.html');
+  if (context.pages().length !== pagesBefore) fail('switching tabs in a page opened a new browser tab');
 
   const badge = await worker.evaluate(() => chrome.action.getBadgeText({}));
   console.log('badge:', badge);

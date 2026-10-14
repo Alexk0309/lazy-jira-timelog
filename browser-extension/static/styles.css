@@ -70,6 +70,59 @@ body.popup .page {
   padding: 18px 16px 96px;
 }
 
+/* Tab bar: switches views in place */
+.tabbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.tabs {
+  flex: 1;
+  display: flex;
+  background: var(--field);
+  border-radius: 9px;
+  padding: 2px;
+}
+
+.tabs a {
+  flex: 1;
+  text-align: center;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 5px 8px;
+  border-radius: 7px;
+}
+
+.tabs a:hover {
+  color: var(--blue);
+}
+
+.tabs a[aria-current='page'] {
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  color: var(--text);
+  cursor: default;
+}
+
+.tabs a:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: -2px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .tabs a[aria-current='page'] {
+    background: #636366;
+  }
+}
+
+body.popup .tabbar {
+  margin-bottom: 16px;
+}
+
 /* Header */
 .top {
   display: flex;
@@ -895,6 +948,49 @@ a.btn {
 
 .ticket .flag[aria-pressed='true'] svg {
   fill: currentColor;
+}
+
+.ticket .flag-space {
+  flex: 0 0 30px;
+}
+
+.ticket.parent {
+  background: var(--surface-2);
+}
+
+.ticket.parent .row-key {
+  font-weight: 600;
+}
+
+.ticket .toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 4px 6px 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--field);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ticket .toggle:hover {
+  color: var(--blue);
+}
+
+.ticket .toggle svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.15s;
+}
+
+.ticket .toggle[aria-expanded='false'] svg {
+  transform: rotate(-90deg);
 }
 
 .ticket-head {
