@@ -826,6 +826,23 @@ a.btn {
   gap: 8px;
 }
 
+.section-title:has(.title-actions) {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+.title-actions {
+  display: flex;
+  gap: 14px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.btn-link:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
 .btn-link {
   border: 0;
   background: transparent;
