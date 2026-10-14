@@ -15,7 +15,25 @@
         <h1 class="hero" id="total">&nbsp;</h1>
         <div class="status" id="status"><span class="dot"></span><span id="status-text">Not tracking</span></div>
       </div>
+      <div class="icon-buttons">
+        <button class="icon-button" id="prev-day" title="Previous day" aria-label="Previous day">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>
+        </button>
+        <button class="btn btn-plain" id="to-today" hidden>Today</button>
+        <button class="icon-button" id="next-day" title="Next day" aria-label="Next day">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+        </button>
+        <span class="date-pick">
+          <button class="icon-button" id="pick-button" title="Pick a date" aria-label="Pick a date">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+          </button>
+          <input type="date" id="pick-day" tabindex="-1" aria-hidden="true">
+        </span>
+      </div>
     </header>
+
+    <div class="week" id="week" role="group" aria-label="Days of the week"></div>
+    <p class="footnote other-days" id="other-days" hidden></p>
 
     <div id="setup" class="card" hidden>
       <h2>Connect Jira</h2>

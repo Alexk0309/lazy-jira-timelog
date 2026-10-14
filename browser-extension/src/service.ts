@@ -31,6 +31,8 @@ export interface PostInput {
 export interface WorklogEdit {
   key: string;
   id: string;
+  /** Another issue to move the worklog to. */
+  newKey?: string;
   /** Epoch ms. */
   started: number;
   duration: string;
@@ -331,7 +333,12 @@ export class Service {
     return logs;
   }
 
-  async editWorklog(edit: WorklogEdit): Promise<void> {
+  /**
+   * Saves a worklog edit and returns where it now lives. Jira can't move a
+   * worklog between issues, so a new issue gets a copy and the old one is
+   * deleted; if that delete fails the copy is taken back out.
+   */
+  async editWorklog(edit: WorklogEdit): Promise<{ key: string; id: string }> {
     const seconds = parseDuration(edit.duration);
     if (seconds === null || seconds < 60) {
       throw new Error('Enter a duration like 1h 30m.');
@@ -339,8 +346,33 @@ export class Service {
     if (!Number.isFinite(edit.started)) {
       throw new Error('Enter a start time.');
     }
+    const change = { started: edit.started, seconds, comment: edit.comment };
+    const newKey = edit.newKey === undefined ? edit.key : extractIssueKey(edit.newKey.trim().toUpperCase());
+    if (!newKey) {
+      throw new Error('Pick a Jira issue first.');
+    }
     const client = await this.requireClient();
-    await client.updateWorklog(edit.key, edit.id, { started: edit.started, seconds, comment: edit.comment });
+    if (newKey === edit.key) {
+      await client.updateWorklog(edit.key, edit.id, change);
+      return { key: edit.key, id: edit.id };
+    }
+    const id = await client.addWorklog(newKey, change);
+    try {
+      await client.deleteWorklog(edit.key, edit.id);
+    } catch (err) {
+      const undone = await client.deleteWorklog(newKey, id).then(
+        () => true,
+        () => false,
+      );
+      throw new Error(
+        undone
+          ? `Couldn't remove it from ${edit.key}, so it stays there: ${(err as Error).message}`
+          : `It was added to ${newKey} but couldn't be removed from ${edit.key}. Delete one of them.`,
+      );
+    }
+    // Time this tool posted stays settled under the worklog's new home.
+    await this.store.moveSettled(edit.id, id, newKey);
+    return { key: newKey, id };
   }
 
   /**

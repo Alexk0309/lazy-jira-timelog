@@ -279,6 +279,46 @@ describe('Service calendar', () => {
     expect(calls[1].init?.method).toBe('DELETE');
     expect(calls[1].url).toBe('https://team.atlassian.net/rest/api/3/issue/PAY-7/worklog/1?adjustEstimate=auto&notifyUsers=false');
   });
+
+  it('moves a worklog to another issue by adding it there and deleting the original', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    let failDelete = false;
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (init?.method === 'DELETE') {
+        return failDelete && url.includes('/PAY-7/') ? json({ errorMessages: ['You cannot delete this worklog'] }, 403) : new Response(null, { status: 204 });
+      }
+      return json({ id: '2' }, 201);
+    });
+    const store = new Store(new FakeKv());
+    await store.saveSettings({ siteUrl: 'https://team.atlassian.net' });
+    await store.addSettled({ day: '2026-10-14', sourceKey: 'PAY-7', rawMs: 3600_000, action: 'posted', targetKey: 'PAY-7', worklogId: '1', postedSeconds: 3600, at: 0 });
+    const service = new Service(store, fetchImpl);
+
+    await expect(service.editWorklog({ key: 'PAY-7', id: '1', newKey: 'nope', started: day(9), duration: '1h', comment: '' })).rejects.toThrow(/issue/);
+    expect(calls).toHaveLength(0);
+
+    const moved = await service.editWorklog({ key: 'PAY-7', id: '1', newKey: 'ops-12', started: day(9), duration: '1h', comment: 'Rotated keys' });
+    expect(moved).toEqual({ key: 'OPS-12', id: '2' });
+    expect(calls.map((c) => `${c.init?.method} ${new URL(c.url).pathname}`)).toEqual(['POST /rest/api/3/issue/OPS-12/worklog', 'DELETE /rest/api/3/issue/PAY-7/worklog/1']);
+    expect(JSON.parse(calls[0].init?.body as string)).toMatchObject({ timeSpentSeconds: 3600, started: started(day(9)) });
+    expect(await store.settled()).toMatchObject([{ worklogId: '2', targetKey: 'OPS-12', sourceKey: 'PAY-7' }]);
+
+    // Same issue: a plain edit.
+    calls.length = 0;
+    expect(await service.editWorklog({ key: 'OPS-12', id: '2', newKey: 'OPS-12', started: day(9), duration: '1h', comment: '' })).toEqual({ key: 'OPS-12', id: '2' });
+    expect(calls.map((c) => c.init?.method)).toEqual(['PUT']);
+
+    // When the original can't be deleted, the copy is taken back out.
+    calls.length = 0;
+    failDelete = true;
+    await expect(service.editWorklog({ key: 'PAY-7', id: '5', newKey: 'OPS-12', started: day(9), duration: '1h', comment: '' })).rejects.toThrow(/stays there/);
+    expect(calls.map((c) => `${c.init?.method} ${new URL(c.url).pathname}`)).toEqual([
+      'POST /rest/api/3/issue/OPS-12/worklog',
+      'DELETE /rest/api/3/issue/PAY-7/worklog/5',
+      'DELETE /rest/api/3/issue/OPS-12/worklog/2',
+    ]);
+  });
 });
 
 describe('Service tickets', () => {

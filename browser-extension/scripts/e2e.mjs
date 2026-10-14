@@ -414,6 +414,77 @@ try {
     await cal.emulateMedia({ colorScheme: 'dark' });
     await cal.screenshot({ path: join(shots, 'calendar-dark.png'), fullPage: true });
   }
+  await cal.emulateMedia({ colorScheme: 'light' });
+
+  // Move a log to another ticket: Jira adds it there and deletes the original.
+  await cal.click('#day .row:has(.row-key > .key:text-is("PAY-8")) .row-main');
+  await cal.fill('.row.open .search input', 'rotate');
+  await cal.waitForSelector('.row.open .results li:has-text("OPS-12")');
+  if (shots) await cal.screenshot({ path: join(shots, 'calendar-move.png'), fullPage: true });
+  await cal.click('.row.open .results li:has-text("OPS-12")');
+  await cal.click('.row.open .btn-primary');
+  await cal.waitForFunction(() => !document.querySelector('.row.open'));
+  await cal.waitForSelector('#day .row:has(.row-key > .key:text-is("OPS-12")) .row-title');
+  const moved = await cal.$$eval('#day .row', (rs) => rs.map((r) => `${r.querySelector('.row-key > .key').textContent} ${r.querySelector('.row-time').textContent}`));
+  console.log('calendar after move:', moved.join(' | '), '·', await cal.textContent('#toast'));
+  if (moved.join('|') !== 'PAY-7 1h|OPS-12 45m') fail('move did not show on the calendar');
+  const copy = posted.find((w) => w.key === 'OPS-12' && !w.deleted);
+  if (!copy || copy.timeSpentSeconds !== 2700 || !posted.find((w) => w.key === 'PAY-8' && w.deleted)) fail('move did not add to OPS-12 and delete from PAY-8');
+  await cal.reload();
+  await cal.waitForSelector('#day .row');
+  const reloaded = await cal.$$eval('#day .row', (rs) => rs.map((r) => r.querySelector('.row-key > .key').textContent).join('|'));
+  if (reloaded !== 'PAY-7|OPS-12') fail(`moved log did not stick after reload: ${reloaded}`);
+
+  // Add log on an earlier day opens the review on that day.
+  const pad = (n) => String(n).padStart(2, '0');
+  const ago = (n) => {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+  const earlier = ago(2);
+
+  // Change a log's date: it moves to that day, and the calendar follows it.
+  const yesterday = ago(1);
+  await cal.click('#day .row:has(.row-key > .key:text-is("OPS-12")) .row-main');
+  await cal.fill('.row.open input.date', yesterday);
+  if (shots) await cal.screenshot({ path: join(shots, 'calendar-date.png'), fullPage: true });
+  await cal.click('.row.open .btn-primary');
+  await cal.waitForFunction((d) => document.querySelector('.cal-day.selected')?.dataset.day === d && document.querySelector('#day .row'), yesterday);
+  const redated = edits.findLast((e) => e.method === 'PUT');
+  const onYesterday = await cal.$$eval('#day .row', (rs) => rs.map((r) => r.querySelector('.row-key > .key').textContent).join('|'));
+  console.log('re-dated:', redated?.key, redated?.body.started, '· now on', yesterday, ':', onYesterday);
+  if (redated?.key !== 'OPS-12' || !redated.body.started.startsWith(yesterday) || onYesterday !== 'OPS-12') fail('changing the date did not move the log');
+  if (!(await cal.$(`.cal-day[data-day="${earlier}"]`))) await cal.click('#prev');
+  await cal.click(`.cal-day[data-day="${earlier}"]`);
+  await cal.click('#add-log');
+  await cal.waitForURL(`**/review.html?day=${earlier}`);
+  await cal.waitForSelector('#add-entry');
+  const eyebrow = await cal.textContent('#date');
+  const selectedChip = await cal.getAttribute('.week .cal-day[aria-pressed="true"]', 'data-day');
+  console.log('review opened on:', eyebrow, '· chip', selectedChip);
+  if (selectedChip !== earlier) fail('review did not open on the day picked in the calendar');
+  await cal.click('#add-entry');
+  await cal.fill('.row.open .search input', 'rotate');
+  await cal.click('.row.open .results li:has-text("OPS-12")');
+  await cal.fill('.row.open .duration', '1h 30m');
+  await cal.fill('.row.open textarea', 'Rotated staging keys');
+  if (shots) await cal.screenshot({ path: join(shots, 'review-other-day.png'), fullPage: true });
+  await cal.click('.row.open .btn-primary');
+  await cal.waitForSelector('.row.done');
+  const back = posted.at(-1);
+  console.log('posted on an earlier day:', back.key, back.timeSpentSeconds, back.started);
+  if (back.key !== 'OPS-12' || back.timeSpentSeconds !== 5400 || !back.started.startsWith(`${earlier}T09:00`)) fail('entry on an earlier day did not post on that day');
+  await cal.waitForFunction((d) => document.querySelector(`.week .cal-day[data-day="${d}"] .cal-time`)?.textContent === '1h 30m', earlier);
+
+  // The strip switches days, with a dot and a link where time waits to be logged.
+  await cal.click('#next-day');
+  await cal.click('#to-today');
+  await cal.waitForFunction(() => !location.search.includes('day='));
+  const pendingToday = await cal.$('.week .cal-day.today.pending');
+  console.log('today has a pending dot:', !!pendingToday, '· next-day disabled:', await cal.isDisabled('#next-day'));
+  if (!(await cal.isDisabled('#next-day'))) fail('the review lets you go past today');
+  if (shots) await cal.screenshot({ path: join(shots, 'review-week.png'), fullPage: true });
 
   // Popup-sized and dark-mode views.
   const popup = await context.newPage();

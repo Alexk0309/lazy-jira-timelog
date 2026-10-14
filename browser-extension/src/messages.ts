@@ -32,7 +32,7 @@ export interface Api {
   reorderTickets: { req: { keys: string[] }; res: TicketList };
   sortTickets: { req: void; res: TicketList };
   logged: { req: { from: number; to: number }; res: LoggedWork[] };
-  editWorklog: { req: WorklogEdit; res: void };
+  editWorklog: { req: WorklogEdit; res: { key: string; id: string } };
   deleteWorklog: { req: { key: string; id: string }; res: void };
 }
 

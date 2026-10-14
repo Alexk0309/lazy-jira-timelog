@@ -152,6 +152,18 @@ export class Store {
     });
   }
 
+  /** Points a posted entry at its worklog after the worklog moved to another issue. */
+  moveSettled(worklogId: string, newId: string, newKey: string): Promise<void> {
+    return this.serial(async () => {
+      const settled = await this.settled();
+      const entry = settled.find((e) => e.worklogId === worklogId);
+      if (entry) {
+        Object.assign(entry, { worklogId: newId, targetKey: newKey });
+        await this.kv.set({ settled });
+      }
+    });
+  }
+
   async settled(): Promise<SettledEntry[]> {
     const { settled } = await this.kv.get('settled');
     return (settled as SettledEntry[] | undefined) ?? [];

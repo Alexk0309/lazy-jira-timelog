@@ -1,9 +1,11 @@
 import { adjustEstimate, estimateProgress } from '../core/estimate';
+import { prioritized, type Ticket } from '../core/tickets';
 import { dayStart, formatDuration, localDay, parseDuration } from '../core/time';
 import type { LoggedWork } from '../jira';
 import { call } from '../messages';
 import { el, estimateBar, ticketHeading, toast } from './dom';
 import { goTo, mountTabs } from './nav';
+import { issuePicker } from './picker';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const calEl = $('cal');
@@ -19,6 +21,8 @@ let openId: string | null = null;
 let confirmDeleteId: string | null = null;
 let siteUrl = '';
 let roundMinutes = 15;
+/** Your ticket list, flagged first; offered first when changing a log's issue. */
+let saved: Ticket[] = [];
 /** Bumped on every load so a slow, older month can't overwrite a newer one. */
 let loadToken = 0;
 
@@ -30,6 +34,7 @@ $('this-month').addEventListener('click', () => {
 });
 mountTabs('calendar.html');
 $('setup-button').addEventListener('click', () => goTo('options.html'));
+$('add-log').addEventListener('click', () => goTo('review.html', selected === today ? {} : { day: selected }));
 
 void init();
 
@@ -37,6 +42,9 @@ async function init(): Promise<void> {
   const settings = await call('getSettings');
   siteUrl = settings.siteUrl.replace(/\/+$/, '');
   roundMinutes = settings.roundMinutes;
+  void call('tickets')
+    .then((list) => (saved = prioritized(list)))
+    .catch(() => undefined);
   await showMonth(month);
 }
 
@@ -143,7 +151,9 @@ function renderDay(): void {
   const dayLogs = logs.filter((l) => localDay(l.started) === selected);
   const seconds = dayLogs.reduce((sum, l) => sum + l.seconds, 0);
   const label = new Date(dayStart(selected)).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
-  $('day-title').textContent = `${label}${seconds ? ` · ${formatDuration(seconds * 1000)}` : ''}`;
+  $('day-label').textContent = `${label}${seconds ? ` · ${formatDuration(seconds * 1000)}` : ''}`;
+  // Logging goes through the review, which only goes up to today.
+  $('add-log').hidden = selected > today;
   dayEl.replaceChildren();
   if (loading) {
     dayEl.append(el('p', { class: 'footnote' }, 'Loading your worklogs from Jira…'));
@@ -185,6 +195,18 @@ function renderLog(log: LoggedWork): HTMLElement {
 }
 
 function renderEditor(log: LoggedWork): HTMLElement {
+  let key = log.key;
+  let summary = log.summary;
+  const issue = issuePicker({
+    current: () => key,
+    saved: () => saved,
+    onType: (typed) => (key = typed),
+    onPick: (picked) => {
+      key = picked.key;
+      summary = picked.summary;
+    },
+  });
+  const date = el('input', { type: 'date', value: localDay(log.started), max: today, 'aria-label': 'Date', class: 'start date' }) as HTMLInputElement;
   const start = el('input', { type: 'time', value: clock(log.started), 'aria-label': 'Start time', class: 'start' }) as HTMLInputElement;
 
   const duration = el('input', { class: 'duration', type: 'text', value: formatDuration(log.seconds * 1000), 'aria-label': 'Duration' }) as HTMLInputElement;
@@ -235,9 +257,14 @@ function renderEditor(log: LoggedWork): HTMLElement {
   const save = el('button', { class: 'btn btn-primary', type: 'button' }, 'Save') as HTMLButtonElement;
   save.addEventListener('click', async () => {
     const seconds = parseDuration(duration.value);
-    const started = atClock(localDay(log.started), start.value);
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(date.value) ? date.value : null;
+    const started = day ? atClock(day, start.value) : null;
     if (seconds === null || seconds < 60) {
       showError('Enter a duration like 1h 30m.');
+      return;
+    }
+    if (!day || day > today) {
+      showError('Pick a date up to today.');
       return;
     }
     if (started === null) {
@@ -246,12 +273,37 @@ function renderEditor(log: LoggedWork): HTMLElement {
     }
     save.disabled = true;
     try {
-      await call('editWorklog', { key: log.key, id: log.id, started, duration: duration.value, comment: comment.value });
-      adjustLocally(log.key, seconds - log.seconds);
+      const moving = key !== log.key;
+      const moved = await call('editWorklog', {
+        key: log.key,
+        id: log.id,
+        ...(moving ? { newKey: key } : {}),
+        started,
+        duration: duration.value,
+        comment: comment.value,
+      });
+      if (moving) {
+        adjustLocally(log.key, -log.seconds);
+        const from = log.key;
+        Object.assign(log, { id: moved.id, key: moved.key, summary: summary === log.summary ? '' : summary, estimate: undefined });
+        void refreshEstimate(moved.key);
+        toast(`Moved ${formatDuration(seconds * 1000)} from ${from} to ${moved.key}`);
+      } else {
+        adjustLocally(log.key, seconds - log.seconds);
+        toast(`Updated ${log.key}`);
+      }
       Object.assign(log, { started, seconds, comment: comment.value.trim() });
       openId = null;
+      // A new date takes you to it, so you see the log where it went.
+      if (day !== selected) {
+        selected = day;
+        toast(`Moved to ${new Date(dayStart(day)).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}`);
+        if (firstOfMonth(day) !== month) {
+          void showMonth(firstOfMonth(day));
+          return;
+        }
+      }
       render();
-      toast(`Updated ${log.key}`);
     } catch (err) {
       save.disabled = false;
       showError((err as Error).message);
@@ -269,7 +321,8 @@ function renderEditor(log: LoggedWork): HTMLElement {
   return el(
     'div',
     { class: 'editor' },
-    el('div', { class: 'field-row' }, start, el('div', { class: 'stepper' }, minus, duration, plus)),
+    issue,
+    el('div', { class: 'field-row' }, date, start, el('div', { class: 'stepper' }, minus, duration, plus)),
     comment,
     note,
     actions,
@@ -333,6 +386,21 @@ function chevron(): SVGElement {
   path.setAttribute('d', 'm9 6 6 6-6 6');
   svg.append(path);
   return svg;
+}
+
+/** Reads a ticket's title and estimate again after time moved onto it. */
+async function refreshEstimate(key: string): Promise<void> {
+  const info = (await call('issues', { keys: [key] }).catch(() => ({}) as Record<string, undefined>))[key];
+  if (!info) {
+    return;
+  }
+  for (const l of logs) {
+    if (l.key === key) {
+      l.summary = info.summary;
+      l.estimate = info.estimate;
+    }
+  }
+  renderDay();
 }
 
 /** Keeps the estimate bars in step with an edit or delete without reloading the month. */

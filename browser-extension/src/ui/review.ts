@@ -2,13 +2,14 @@ import type { AiNewEntry, AiQuestion, AiSuggestion } from '../ai';
 import { isUnassignedKey } from '../classify';
 import { roundToStep } from '../core/drafts';
 import { prioritized, type Ticket } from '../core/tickets';
-import { dayStart, formatDuration, parseDuration } from '../core/time';
+import { dayStart, formatDuration, localDay, parseDuration } from '../core/time';
 import { type Estimate, estimateProgress } from '../core/estimate';
 import type { Draft } from '../core/types';
 import type { IssueSummary } from '../jira';
 import { call } from '../messages';
 import { el, estimateBar, ticketHeading, toast } from './dom';
-import { goTo, mountTabs } from './nav';
+import { goTo, mountTabs, setParams } from './nav';
+import { issuePicker } from './picker';
 
 interface Row {
   id: string;
@@ -19,7 +20,7 @@ interface Row {
   duration: string;
   started: number;
   comment: string;
-  /** tracked: measured by the browser; suggested: touched in Jira today; added: from your day summary. */
+  /** tracked: measured by the browser; suggested: touched in Jira today; added: from your day summary or by hand. */
   kind: 'tracked' | 'suggested' | 'added';
   done: boolean;
   /** For added rows: which AI run and entry it came from. */
@@ -38,6 +39,13 @@ let rows: Row[] = [];
 let openId: string | null = null;
 let roundMinutes = 15;
 let today = '';
+/** The day on show; only its entries are listed and logged. */
+let selected = '';
+/** Seconds already in Jira per day of the week on show, for the day strip. */
+let loggedPerDay = new Map<string, number>();
+let weekShown = '';
+let weekToken = 0;
+let jiraReady = false;
 let nextId = 1;
 let aiEnabled = false;
 /** Day Cursor is currently filling in, if any. */
@@ -58,6 +66,19 @@ const AI_FRESH_MS = 12 * 3_600_000;
 
 $('setup-button').addEventListener('click', () => goTo('options.html'));
 $('log-all').addEventListener('click', () => void logAll());
+$('prev-day').addEventListener('click', () => select(shiftDay(selected, -1)));
+$('next-day').addEventListener('click', () => select(shiftDay(selected, 1)));
+$('to-today').addEventListener('click', () => select(today));
+const dayInput = $<HTMLInputElement>('pick-day');
+$('pick-button').addEventListener('click', () => {
+  dayInput.value = selected;
+  try {
+    dayInput.showPicker();
+  } catch {
+    dayInput.focus();
+  }
+});
+dayInput.addEventListener('change', () => dayInput.value && select(dayInput.value));
 
 void load();
 
@@ -66,8 +87,9 @@ async function load(): Promise<void> {
   roundMinutes = settings.roundMinutes;
   aiEnabled = !!settings.cursorApiKey && !state.setupMessage;
   today = state.today;
-
-  $('date').textContent = new Date(dayStart(today)).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  selected = validDay(new URLSearchParams(location.search).get('day')) ?? today;
+  dayInput.max = today;
+  jiraReady = !state.setupMessage;
   const status = $('status');
   status.classList.toggle('live', !!state.tracking);
   const trackingKey = state.tracking?.key;
@@ -80,6 +102,7 @@ async function load(): Promise<void> {
 
   rows = state.drafts.map((d) => fromDraft(d));
   render();
+  void loadWeek();
 
   if (!state.setupMessage) {
     void call('tickets')
@@ -185,31 +208,35 @@ async function loadManualLogs(): Promise<void> {
 // ---------- Rendering ----------
 
 function render(): void {
+  renderDate();
   daysEl.replaceChildren();
-  const tracked = rows.filter((r) => r.kind !== 'suggested');
-  const suggested = rows.filter((r) => r.kind === 'suggested' && !r.done);
-  const days = [...new Set(tracked.map((r) => r.day))];
-  // With AI on, today is always there so you can describe a day nothing tracked.
-  if (aiEnabled && !days.includes(today)) {
-    days.unshift(today);
-  }
+  const day = selected;
+  const dayRows = rows.filter((r) => r.kind !== 'suggested' && r.day === day);
+  const suggested = day === today ? rows.filter((r) => r.kind === 'suggested' && !r.done) : [];
+  const caughtUp = day === today && dayRows.length === 0 && suggested.length === 0 && $('setup').hidden && !aiEnabled;
+  $('empty').hidden = !caughtUp;
 
-  for (const day of days) {
-    const dayRows = tracked.filter((r) => r.day === day);
-    const total = dayRows.filter((r) => !r.done).reduce((sum, r) => sum + (parseDuration(r.duration) ?? 0), 0);
-    const title = el('h2', { class: 'section-title' }, el('span', {}, `${dayLabel(day)}${total > 0 ? ` · ${formatDuration(total * 1000)}` : ''}`));
-    if (aiEnabled && (day === today || dayRows.some((r) => !r.done))) {
-      title.append(aiButton(day));
-    }
-    daysEl.append(title);
-    if (aiComposerDay === day && aiBusyDay === null) {
-      daysEl.append(aiComposer(day));
-    }
-    if (dayRows.length > 0) {
-      daysEl.append(el('div', { class: 'group' }, ...dayRows.map(renderRow)));
-    } else if (aiComposerDay !== day) {
-      daysEl.append(el('p', { class: 'footnote' }, 'Nothing tracked yet. Describe your day and AI drafts the entries.'));
-    }
+  const actions = el('span', { class: 'title-actions' });
+  if (aiEnabled) {
+    actions.append(aiButton(day));
+  }
+  const add = el('button', { class: 'btn-link', id: 'add-entry', type: 'button' }, 'Add entry');
+  add.addEventListener('click', () => addEntry(day));
+  actions.append(add);
+  daysEl.append(el('h2', { class: 'section-title' }, el('span', { id: 'day-label' }), actions));
+  if (aiComposerDay === day && aiBusyDay === null) {
+    daysEl.append(aiComposer(day));
+  }
+  if (dayRows.length > 0) {
+    daysEl.append(el('div', { class: 'group' }, ...dayRows.map(renderRow)));
+  } else if (aiComposerDay !== day && !caughtUp) {
+    daysEl.append(
+      el(
+        'p',
+        { class: 'footnote' },
+        aiEnabled ? 'Nothing tracked on this day. Add an entry, or describe the day and AI drafts the entries.' : 'Nothing tracked on this day. Add an entry for work you did away from the browser.',
+      ),
+    );
   }
   if (suggested.length > 0) {
     daysEl.append(
@@ -218,15 +245,142 @@ function render(): void {
       el('p', { class: 'footnote' }, 'No time was tracked on these. Add some if you worked on them away from the browser.'),
     );
   }
-
-  const open = rows.filter((r) => !r.done && r.kind !== 'suggested');
-  $('empty').hidden = open.length > 0 || suggested.length > 0 || !$('setup').hidden || aiEnabled;
   renderTotals();
 }
 
+/** Switches the review to another day, keeping it in the address so reopening lands there. */
+function select(day: string): void {
+  if (day > today) {
+    day = today;
+  }
+  if (day === selected) {
+    return;
+  }
+  selected = day;
+  openId = null;
+  if (aiComposerDay !== day) {
+    aiComposerDay = null;
+  }
+  setParams(day === today ? {} : { day });
+  render();
+  void loadWeek();
+}
+
+function renderDate(): void {
+  $('date').textContent = new Date(dayStart(selected)).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  $<HTMLButtonElement>('next-day').disabled = selected >= today;
+  $('to-today').hidden = selected === today;
+}
+
+/** Monday-first week around the day on show: Jira's logged time per day and a dot where time waits to be logged. */
+function renderWeek(): void {
+  const week = $('week');
+  week.replaceChildren();
+  const pending = pendingPerDay();
+  for (const day of weekOf(selected)) {
+    const d = new Date(dayStart(day));
+    const logged = loggedPerDay.get(day) ?? 0;
+    const waiting = pending.get(day) ?? 0;
+    const classes = ['cal-day'];
+    if (day === today) classes.push('today');
+    if (day === selected) classes.push('selected');
+    if (day > today) classes.push('future');
+    if (d.getDay() === 0 || d.getDay() === 6) classes.push('weekend');
+    if (waiting > 0) classes.push('pending');
+    const label = [
+      d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }),
+      logged ? `${formatDuration(logged * 1000)} logged` : '',
+      waiting ? `${formatDuration(waiting * 1000)} to log` : '',
+    ].filter(Boolean);
+    const cell = el(
+      'button',
+      { class: classes.join(' '), type: 'button', 'data-day': day, 'aria-label': label.join(', '), 'aria-pressed': String(day === selected) },
+      el('span', { class: 'week-name' }, d.toLocaleDateString(undefined, { weekday: 'short' })),
+      el('span', { class: 'cal-num' }, String(d.getDate())),
+      el('span', { class: 'cal-time' }, logged ? formatDuration(logged * 1000) : ''),
+      el('span', { class: 'cal-bar', style: `--fill: ${Math.min(1, logged / (8 * 3600))}` }),
+    ) as HTMLButtonElement;
+    cell.disabled = day > today;
+    cell.addEventListener('click', () => select(day));
+    week.append(cell);
+  }
+
+  // Time waiting on other days, so switching days never hides it.
+  const others = [...pending].filter(([day]) => day !== selected).sort(([a], [b]) => b.localeCompare(a));
+  const hint = $('other-days');
+  hint.replaceChildren();
+  hint.hidden = others.length === 0;
+  if (others.length > 0) {
+    hint.append('Also to log: ');
+    others.forEach(([day, seconds], i) => {
+      const link = el('button', { class: 'btn-link', type: 'button' }, `${dayLabel(day)} ${formatDuration(seconds * 1000)}`);
+      link.addEventListener('click', () => select(day));
+      hint.append(...(i > 0 ? [' · '] : []), link);
+    });
+  }
+}
+
+/** Unlogged seconds per day across everything the review knows about. */
+function pendingPerDay(): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const r of rows) {
+    const seconds = parseDuration(r.duration) ?? 0;
+    if (!r.done && r.kind !== 'suggested' && seconds > 0) {
+      result.set(r.day, (result.get(r.day) ?? 0) + seconds);
+    }
+  }
+  return result;
+}
+
+/** Reads what Jira already has for the week on show, once per week. */
+async function loadWeek(): Promise<void> {
+  const days = weekOf(selected);
+  if (!jiraReady || weekShown === days[0]) {
+    return;
+  }
+  weekShown = days[0];
+  const token = ++weekToken;
+  const logs = await call('logged', { from: dayStart(days[0]), to: dayStart(shiftDay(days[6], 1)) }).catch(() => []);
+  if (token !== weekToken) {
+    return;
+  }
+  loggedPerDay = new Map();
+  for (const log of logs) {
+    const day = localDay(log.started);
+    loggedPerDay.set(day, (loggedPerDay.get(day) ?? 0) + log.seconds);
+  }
+  renderWeek();
+}
+
+/** A blank entry for work nothing tracked, placed after the day's other entries. */
+function addEntry(day: string): void {
+  const started = Math.max(
+    dayStart(day) + 9 * 3_600_000,
+    ...rows.filter((r) => r.day === day && r.kind !== 'suggested').map((r) => r.started + (parseDuration(r.duration) ?? 0) * 1000),
+  );
+  const row: Row = {
+    id: String(nextId++),
+    day,
+    sourceKey: `manual:${nextId}`,
+    targetKey: '',
+    rawMs: 0,
+    duration: formatDuration(roundMinutes * 60_000 * 4),
+    started,
+    comment: '',
+    kind: 'added',
+    done: false,
+  };
+  rows.push(row);
+  openId = row.id;
+  render();
+  document.querySelector<HTMLInputElement>(`.row[data-id="${row.id}"] .search input`)?.focus();
+}
+
 function renderTotals(): void {
-  const open = rows.filter((r) => !r.done && (r.kind === 'tracked' || parseDuration(r.duration)));
+  const open = rows.filter((r) => r.day === selected && !r.done && (r.kind === 'tracked' || parseDuration(r.duration)));
   const seconds = open.reduce((sum, r) => sum + (parseDuration(r.duration) ?? 0), 0);
+  renderWeek();
+  $('day-label').textContent = `${dayLabel(selected)}${seconds > 0 ? ` · ${formatDuration(seconds * 1000)}` : ''}`;
   const total = $('total');
   total.replaceChildren();
   if (seconds > 0) {
@@ -280,67 +434,24 @@ function renderRow(row: Row): HTMLElement {
 }
 
 function renderEditor(row: Row): HTMLElement {
-  // Issue picker
-  const issue = el('input', { type: 'text', value: row.targetKey, placeholder: 'Search Jira issues', 'aria-label': 'Jira issue' }) as HTMLInputElement;
-  const results = el('ul', { class: 'results', hidden: '' });
-  let timer = 0;
-  const showResults = (found: IssueSummary[]) => {
-    const flagged = new Set(saved.filter((t) => t.flagged).map((t) => t.key));
-    results.replaceChildren(
-      ...found.map((r) => {
-        const li = el('li', { tabindex: '0', class: flagged.has(r.key) ? 'flagged' : '' }, el('strong', {}, r.key), r.summary);
-        const pick = () => {
-          row.targetKey = r.key;
-          summaries.set(r.key, r.summary);
-          issue.value = r.key;
-          results.hidden = true;
-          if (row.question) {
-            answerQuestion(row, r.key);
-          }
-          updateHeader(row);
-        };
-        li.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          pick();
-        });
-        li.addEventListener('keydown', (e) => e.key === 'Enter' && pick());
-        return li;
-      }),
-    );
-    results.hidden = found.length === 0;
-  };
-  // Your ticket list comes first: on focus before you type, and on top of Jira's matches after.
-  const savedMatching = (query: string) => {
-    const q = query.trim().toLowerCase();
-    return saved.filter((t) => !q || t.key.toLowerCase().includes(q) || t.summary.toLowerCase().includes(q)).slice(0, 8);
-  };
-  issue.addEventListener('focus', () => {
-    if (!issue.value.trim() || issue.value.trim() === row.targetKey) {
-      showResults(savedMatching(''));
-    }
-  });
-  issue.addEventListener('input', () => {
-    row.targetKey = issue.value.trim().toUpperCase();
-    if (row.note?.level === 'ai') {
-      row.note = undefined;
-    }
-    clearTimeout(timer);
-    const query = issue.value;
-    const mine = savedMatching(query);
-    showResults(mine);
-    timer = window.setTimeout(async () => {
-      const found = query.trim().length >= 2 ? await call('search', { query }).catch(() => [] as IssueSummary[]) : [];
-      if (issue.value !== query) {
-        return;
+  const issue = issuePicker({
+    current: () => row.targetKey,
+    saved: () => saved,
+    onType: (key) => {
+      row.targetKey = key;
+      if (row.note?.level === 'ai') {
+        row.note = undefined;
       }
-      const keys = new Set(mine.map((t) => t.key));
-      showResults([...mine, ...found.filter((r) => !keys.has(r.key))].slice(0, 10));
-    }, 250);
-  });
-  issue.addEventListener('blur', () => {
-    results.hidden = true;
-    issue.value = row.targetKey;
-    updateHeader(row);
+    },
+    onPick: (r) => {
+      row.targetKey = r.key;
+      summaries.set(r.key, r.summary);
+      if (row.question) {
+        answerQuestion(row, r.key);
+      }
+      updateHeader(row);
+    },
+    onBlur: () => updateHeader(row),
   });
 
   // Duration stepper
@@ -382,7 +493,7 @@ function renderEditor(row: Row): HTMLElement {
   return el(
     'div',
     { class: 'editor' },
-    el('div', { class: 'field-row' }, el('div', { class: 'search' }, issue, results), el('div', { class: 'stepper' }, minus, duration, plus)),
+    el('div', { class: 'field-row' }, issue, el('div', { class: 'stepper' }, minus, duration, plus)),
     comment,
     row.note ? el('span', { class: `note ${row.note.level}` }, row.note.text) : '',
     el('div', { class: 'actions' }, discard, split, el('span', { class: 'spacer' }), log),
@@ -513,6 +624,7 @@ async function logRows(targets: Row[]): Promise<void> {
       row.done = true;
       row.note = undefined;
       logged++;
+      loggedPerDay.set(row.day, (loggedPerDay.get(row.day) ?? 0) + (parseDuration(row.duration) ?? 0));
       consumeAi(row);
       if (openId === row.id) {
         openId = null;
@@ -532,7 +644,7 @@ async function logAll(): Promise<void> {
   const button = $<HTMLButtonElement>('log-all');
   button.disabled = true;
   try {
-    await logRows(rows.filter((r) => !r.done && r.targetKey && parseDuration(r.duration)));
+    await logRows(rows.filter((r) => r.day === selected && !r.done && r.targetKey && parseDuration(r.duration)));
   } finally {
     button.disabled = false;
   }
@@ -802,6 +914,27 @@ function saveSummaryDraft(day: string, text: string): void {
 }
 
 // ---------- Helpers ----------
+
+function shiftDay(day: string, by: number): string {
+  const d = new Date(dayStart(day));
+  d.setDate(d.getDate() + by);
+  return localDay(d.getTime());
+}
+
+/** The seven days, Monday first, of the week holding `day`. */
+function weekOf(day: string): string[] {
+  const d = new Date(dayStart(day));
+  const monday = shiftDay(day, -((d.getDay() + 6) % 7));
+  return Array.from({ length: 7 }, (_, i) => shiftDay(monday, i));
+}
+
+/** A YYYY-MM-DD day from the address, if real and not in the future. */
+function validDay(value: string | null): string | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value) || localDay(dayStart(value)) !== value) {
+    return null;
+  }
+  return value > today ? today : value;
+}
 
 function dayLabel(day: string): string {
   if (day === today) {
