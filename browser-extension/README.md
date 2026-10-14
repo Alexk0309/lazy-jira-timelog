@@ -22,16 +22,43 @@ A browser extension for Google Chrome and Microsoft Edge that notices the time y
 
 ## Install (pilot)
 
-1. Download `lazy-jira-timelog-browser-<version>.zip` and unzip it.
-2. Open the extensions page, turn on **Developer mode**, click **Load unpacked** and pick the unzipped folder.
+You need [Git](https://git-scm.com/) and [Node.js](https://nodejs.org/) 18 or later.
+
+1. Clone the repository and build the extension:
+
+   ```sh
+   git clone https://github.com/Alexk0309/lazy-jira-timelog.git
+   cd lazy-jira-timelog/browser-extension
+   npm install
+   npm run build
+   ```
+
+   This creates a `dist` folder inside `browser-extension`. That folder is the extension.
+2. Open the extensions page, turn on **Developer mode**, click **Load unpacked** and pick the `browser-extension/dist` folder.
    - Chrome: `chrome://extensions` (Developer mode is the switch at the top right).
-   - Edge: `edge://extensions` (Developer mode is the switch in the left sidebar). The same zip works in both.
+   - Edge: `edge://extensions` (Developer mode is the switch in the left sidebar). The same `dist` folder works in both.
 3. Settings opens automatically. Enter your Jira site, e.g. `https://your-team.atlassian.net`, and click **Test connection**.
    - **Browser** sign-in (default) reuses the Jira session you're already logged in to, so no token is needed.
    - **API token** is the fallback if your company blocks that. Create one at id.atlassian.com → Security → API tokens.
 4. Self-hosted GitLab or another tool? Add its domain under **Sites**. The browser will ask you to allow it.
+5. Optional: to use **Fill in with AI**, add a Cursor API key in Settings (see [Fill in with AI](#fill-in-with-ai)).
 
-For a team rollout, publish the same zip as an unlisted item on the Chrome Web Store and a hidden listing on Microsoft Edge Add-ons, or push it with Google Admin or Intune, so updates arrive automatically.
+Pin the extension from the browser's puzzle-piece menu so its badge and popup are always visible.
+
+### Updating
+
+Pull the latest code and rebuild, then reload the extension:
+
+```sh
+cd lazy-jira-timelog/browser-extension
+git pull
+npm install
+npm run build
+```
+
+On the extensions page, click the reload icon on the Lazy Jira Timelog card. Your settings, ticket list and tracked time are kept, because the extension stays loaded from the same `dist` folder. Don't remove the extension to update it, since that deletes its saved data.
+
+For a wider rollout, `npm run package` builds a zip that can be published as an unlisted item on the Chrome Web Store and a hidden listing on Microsoft Edge Add-ons, or pushed with Google Admin or Intune, so updates arrive automatically.
 
 ## Fill in with AI
 
