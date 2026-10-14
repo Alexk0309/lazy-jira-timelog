@@ -206,6 +206,7 @@ function renderEditor(log: LoggedWork): HTMLElement {
       summary = picked.summary;
     },
   });
+  const date = el('input', { type: 'date', value: localDay(log.started), max: today, 'aria-label': 'Date', class: 'start date' }) as HTMLInputElement;
   const start = el('input', { type: 'time', value: clock(log.started), 'aria-label': 'Start time', class: 'start' }) as HTMLInputElement;
 
   const duration = el('input', { class: 'duration', type: 'text', value: formatDuration(log.seconds * 1000), 'aria-label': 'Duration' }) as HTMLInputElement;
@@ -256,9 +257,14 @@ function renderEditor(log: LoggedWork): HTMLElement {
   const save = el('button', { class: 'btn btn-primary', type: 'button' }, 'Save') as HTMLButtonElement;
   save.addEventListener('click', async () => {
     const seconds = parseDuration(duration.value);
-    const started = atClock(localDay(log.started), start.value);
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(date.value) ? date.value : null;
+    const started = day ? atClock(day, start.value) : null;
     if (seconds === null || seconds < 60) {
       showError('Enter a duration like 1h 30m.');
+      return;
+    }
+    if (!day || day > today) {
+      showError('Pick a date up to today.');
       return;
     }
     if (started === null) {
@@ -288,6 +294,15 @@ function renderEditor(log: LoggedWork): HTMLElement {
       }
       Object.assign(log, { started, seconds, comment: comment.value.trim() });
       openId = null;
+      // A new date takes you to it, so you see the log where it went.
+      if (day !== selected) {
+        selected = day;
+        toast(`Moved to ${new Date(dayStart(day)).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}`);
+        if (firstOfMonth(day) !== month) {
+          void showMonth(firstOfMonth(day));
+          return;
+        }
+      }
       render();
     } catch (err) {
       save.disabled = false;
@@ -307,7 +322,7 @@ function renderEditor(log: LoggedWork): HTMLElement {
     'div',
     { class: 'editor' },
     issue,
-    el('div', { class: 'field-row' }, start, el('div', { class: 'stepper' }, minus, duration, plus)),
+    el('div', { class: 'field-row' }, date, start, el('div', { class: 'stepper' }, minus, duration, plus)),
     comment,
     note,
     actions,

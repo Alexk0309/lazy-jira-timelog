@@ -1275,3 +1275,16 @@ a.btn {
 .top .icon-buttons {
   align-items: center;
 }
+
+/* Date, start time and duration share a row; in the popup the duration wraps below. */
+.editor .field-row:has(input.date) {
+  flex-wrap: wrap;
+}
+
+.editor input.start.date {
+  width: 150px;
+}
+
+.editor input.start[type='time'] {
+  width: 126px;
+}

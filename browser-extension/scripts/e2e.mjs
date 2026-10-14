@@ -443,6 +443,18 @@ try {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   };
   const earlier = ago(2);
+
+  // Change a log's date: it moves to that day, and the calendar follows it.
+  const yesterday = ago(1);
+  await cal.click('#day .row:has(.row-key > .key:text-is("OPS-12")) .row-main');
+  await cal.fill('.row.open input.date', yesterday);
+  if (shots) await cal.screenshot({ path: join(shots, 'calendar-date.png'), fullPage: true });
+  await cal.click('.row.open .btn-primary');
+  await cal.waitForFunction((d) => document.querySelector('.cal-day.selected')?.dataset.day === d && document.querySelector('#day .row'), yesterday);
+  const redated = edits.findLast((e) => e.method === 'PUT');
+  const onYesterday = await cal.$$eval('#day .row', (rs) => rs.map((r) => r.querySelector('.row-key > .key').textContent).join('|'));
+  console.log('re-dated:', redated?.key, redated?.body.started, '· now on', yesterday, ':', onYesterday);
+  if (redated?.key !== 'OPS-12' || !redated.body.started.startsWith(yesterday) || onYesterday !== 'OPS-12') fail('changing the date did not move the log');
   if (!(await cal.$(`.cal-day[data-day="${earlier}"]`))) await cal.click('#prev');
   await cal.click(`.cal-day[data-day="${earlier}"]`);
   await cal.click('#add-log');
