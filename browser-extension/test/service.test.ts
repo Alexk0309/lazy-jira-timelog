@@ -184,6 +184,35 @@ describe('Service.aiSuggest', () => {
     expect(await store.aiState()).toMatchObject({ status: 'error' });
   });
 
+  it('matches against your ticket list and remembers answers to its questions', async () => {
+    const store = await aiStore();
+    await store.updateTickets(() => ({
+      manualOrder: false,
+      tickets: [
+        { key: 'OPS-12', summary: 'Payout CSV for ops', status: 'To Do', statusCategory: 'new', issueType: 'Story', created: 2, flagged: false, addedAt: 0 },
+        { key: 'OPS-13', summary: 'CSV encoding bug', status: 'To Do', statusCategory: 'new', issueType: 'Bug', created: 1, flagged: true, addedAt: 0 },
+      ],
+    }));
+    const reply = JSON.stringify({
+      rows: [{ id: '~pr51', comment: 'Fixed CSV export.', key: 'OPS-12' }],
+      questions: [{ for: '~pr51', question: 'Which CSV ticket?', options: ['OPS-12', 'OPS-13'] }],
+    });
+    const apis = fakeApis(reply);
+    const service = new Service(store, apis.fetchImpl, () => base + 120 * MIN, async () => {});
+    const day = (await service.drafts())[0].day;
+
+    const result = await service.aiSuggest(day);
+    expect(result.rows.find((r) => r.id === '~pr51')?.key).toBe('OPS-12');
+    expect(result.questions.map((q) => q.options.map((o) => o.key))).toEqual([['OPS-12', 'OPS-13']]);
+    // Flagged first, ahead of the newer unflagged ticket.
+    expect(apis.prompt().indexOf('"key": "OPS-13"')).toBeLessThan(apis.prompt().indexOf('"key": "OPS-12"'));
+
+    const at = (await store.aiState())!.at;
+    await service.answerAiQuestion(at, 0, 'OPS-13');
+    await service.answerAiQuestion(at, 5, 'OPS-12');
+    expect((await store.aiState())?.answers).toEqual({ 0: 'OPS-13' });
+  });
+
   it('needs a Cursor key', async () => {
     const service = new Service(await seeded(), vi.fn(), () => base + 60 * MIN);
     const day = (await service.drafts())[0].day;
@@ -246,5 +275,72 @@ describe('Service calendar', () => {
     await service.deleteWorklog('PAY-7', '1');
     expect(calls[1].init?.method).toBe('DELETE');
     expect(calls[1].url).toBe('https://team.atlassian.net/rest/api/3/issue/PAY-7/worklog/1?adjustEstimate=auto&notifyUsers=false');
+  });
+});
+
+describe('Service tickets', () => {
+  const issue = (key: string, extra: Record<string, unknown> = {}) => ({
+    key,
+    fields: { summary: `Summary of ${key}`, status: { name: 'In Progress', statusCategory: { key: 'indeterminate' } }, issuetype: { name: 'Story' }, created: '2026-10-01T09:00:00.000+0000', ...extra },
+  });
+
+  async function setup(handler: (url: string, init?: RequestInit) => Response | undefined) {
+    const calls: { url: string; body?: { jql?: string } }[] = [];
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: init?.body ? JSON.parse(init.body as string) : undefined });
+      return handler(url, init) ?? json({ errorMessages: ['not found'] }, 404);
+    });
+    const store = new Store(new FakeKv());
+    await store.saveSettings({ siteUrl: 'https://team.atlassian.net' });
+    await store.setProjectKeys(['PAY', 'OPS']);
+    return { store, calls, service: new Service(store, fetchImpl, () => base) };
+  }
+
+  it('adds pasted keys in any case, with parent and status', async () => {
+    const { service, calls } = await setup((url) =>
+      url.endsWith('/search/jql') ? json({ issues: [issue('PAY-1'), issue('PAY-2', { parent: { key: 'PAY-1', fields: { summary: 'Epic' } } })], isLast: true }) : undefined,
+    );
+    const result = await service.addTickets('pay-1, https://team.atlassian.net/browse/PAY-2 and HR-9');
+    expect(calls[0].body?.jql).toBe('key in (PAY-1, PAY-2)');
+    expect(result.added.sort()).toEqual(['PAY-1', 'PAY-2']);
+    expect(result.list.tickets.find((t) => t.key === 'PAY-2')).toMatchObject({ parentKey: 'PAY-1', parentSummary: 'Epic', status: 'In Progress', statusCategory: 'indeterminate' });
+    expect(result.missing).toEqual([]);
+  });
+
+  it('falls back to one lookup per key when a key does not exist', async () => {
+    const { service } = await setup((url) => {
+      if (url.endsWith('/search/jql')) return json({ errorMessages: ["An issue with key 'OPS-404' does not exist"] }, 400);
+      if (url.includes('/issue/OPS-1?')) return json(issue('OPS-1'));
+      return undefined;
+    });
+    const result = await service.addTickets('OPS-1 OPS-404');
+    expect(result.added).toEqual(['OPS-1']);
+    expect(result.missing).toEqual(['OPS-404']);
+  });
+
+  it('explains when nothing pasted looks like a key', async () => {
+    const { service, calls } = await setup(() => undefined);
+    await expect(service.addTickets('hello" OR project = X')).rejects.toThrow(/No Jira keys/);
+    expect(calls).toEqual([]);
+  });
+
+  it('fetches assigned tickets in one click and keeps flags across refreshes', async () => {
+    const { service, calls } = await setup((url, init) => {
+      const jql = JSON.parse((init?.body as string) ?? '{}').jql ?? '';
+      if (jql.startsWith('assignee = currentUser()')) return json({ issues: [issue('PAY-7'), issue('PAY-8')], isLast: true });
+      if (jql.startsWith('key in')) return json({ issues: [issue('PAY-7', { status: { name: 'Done', statusCategory: { key: 'done' } } }), issue('PAY-8')], isLast: true });
+      return undefined;
+    });
+    expect((await service.addAssigned()).added).toEqual(['PAY-7', 'PAY-8']);
+    expect((await service.addAssigned()).added).toEqual([]);
+    await service.flagTickets(['PAY-8'], true);
+    await service.reorderTickets(['PAY-8', 'PAY-7']);
+    const list = await service.refreshTickets();
+    expect(list.tickets.map((t) => [t.key, t.flagged, t.statusCategory])).toEqual([
+      ['PAY-8', true, 'indeterminate'],
+      ['PAY-7', false, 'done'],
+    ]);
+    expect(calls.at(-1)?.body?.jql).toBe('key in (PAY-8, PAY-7)');
+    expect((await service.removeTickets(['PAY-7'])).tickets.map((t) => t.key)).toEqual(['PAY-8']);
   });
 });

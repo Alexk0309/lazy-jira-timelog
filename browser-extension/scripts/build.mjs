@@ -21,6 +21,7 @@ const ctx = await esbuild.context({
     review: 'src/ui/review.ts',
     options: 'src/ui/options.ts',
     calendar: 'src/ui/calendar.ts',
+    tickets: 'src/ui/tickets.ts',
   },
   bundle: true,
   format: 'esm',

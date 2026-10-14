@@ -1,4 +1,6 @@
 import { buildPrompt, parseSuggestions, type AiInput, type AiResult } from './ai';
+import * as list from './core/tickets';
+import type { TicketList } from './core/tickets';
 import { buildDrafts, totalUnloggedMs } from './core/drafts';
 import { shouldRemind } from './core/reminder';
 import { buildSessions } from './core/sessions';
@@ -187,15 +189,24 @@ export class Service {
     await this.store.setAiState({ day, status: 'running', at: this.now() });
     try {
       const assigned = await jira.assignedToMe();
+      // Your ticket list steers matching: tickets on it may be used even when they aren't assigned to you.
+      const saved = list.prioritized(await this.store.tickets()).map((t) => ({
+        key: t.key,
+        summary: t.summary,
+        flagged: t.flagged,
+        ...(t.parentSummary ? { parent: t.parentSummary } : {}),
+      }));
       const keys = drafts.map((d) => issueKeyOf(d.sourceKey)).filter((k): k is string => !!k);
       // Keys you typed yourself may be used even when they aren't assigned to you, if they exist.
-      const typed = extractIssueKeys(summary, await this.store.projectKeys()).filter((k) => !assigned.some((a) => a.key === k));
+      const known = new Set([...assigned, ...saved].map((i) => i.key));
+      const typed = extractIssueKeys(summary, await this.store.projectKeys()).filter((k) => !known.has(k));
       const summaries = await this.issueSummaries([...keys, ...typed]);
       const mentioned = typed.filter((k) => summaries[k]).map((k) => ({ key: k, summary: summaries[k] as string }));
       const notes = (await this.store.notes()).filter((n) => localDay(n.t) === day);
       const input: AiInput = {
         day,
         assigned,
+        saved,
         summary,
         mentioned,
         rows: drafts.map((d) => {
@@ -212,7 +223,14 @@ export class Service {
       };
       const reply = await client.ask(buildPrompt(input), { model, onPoll: keepAlive });
       const result = parseSuggestions(reply, input);
-      await this.store.setAiState({ day, status: 'done', at: this.now(), suggestions: result.rows, added: result.added });
+      await this.store.setAiState({
+        day,
+        status: 'done',
+        at: this.now(),
+        suggestions: result.rows,
+        added: result.added,
+        questions: result.questions,
+      });
       return result;
     } catch (err) {
       await this.store.setAiState({ day, status: 'error', at: this.now(), error: (err as Error).message });
@@ -226,6 +244,74 @@ export class Service {
     if (state?.at === at && !state.consumed?.includes(index)) {
       await this.store.setAiState({ ...state, consumed: [...(state.consumed ?? []), index] });
     }
+  }
+
+  /** Remembers your answer to one of Cursor's questions so reopening the popup doesn't ask again. */
+  async answerAiQuestion(at: number, index: number, key: string): Promise<void> {
+    const state = await this.store.aiState();
+    if (state?.at === at && state.questions?.[index]) {
+      await this.store.setAiState({ ...state, answers: { ...state.answers, [index]: key } });
+    }
+  }
+
+  // ---------- Your ticket list ----------
+
+  tickets(): Promise<TicketList> {
+    return this.store.tickets();
+  }
+
+  /** Adds every issue key found in `text` (one key, or a pasted list). */
+  async addTickets(text: string): Promise<{ list: TicketList; added: string[]; missing: string[] }> {
+    const projectKeys = await this.store.projectKeys();
+    // Without project keys only upper-case keys count, so accept what was pasted in any case.
+    const keys = extractIssueKeys(projectKeys.length > 0 ? text : text.toUpperCase(), projectKeys);
+    if (keys.length === 0) {
+      throw new Error('No Jira keys found. Paste keys like PAY-12, separated by spaces or new lines.');
+    }
+    const details = await (await this.requireClient()).ticketDetails(keys);
+    const found = new Set(details.map((d) => d.key));
+    const result = await this.saveFound(details);
+    return { ...result, missing: keys.filter((k) => !found.has(k)) };
+  }
+
+  /** One click: every open issue assigned to you goes on the list. */
+  async addAssigned(): Promise<{ list: TicketList; added: string[] }> {
+    const client = await this.requireClient();
+    return this.saveFound(await client.ticketsByJql('assignee = currentUser() AND statusCategory != Done ORDER BY created DESC', 100));
+  }
+
+  /** Re-reads summary, status and parent of everything on the list. */
+  async refreshTickets(): Promise<TicketList> {
+    const keys = (await this.store.tickets()).tickets.map((t) => t.key);
+    const details = keys.length > 0 ? await (await this.requireClient()).ticketDetails(keys) : [];
+    return this.store.updateTickets((current) => list.refreshTickets(current, details));
+  }
+
+  flagTickets(keys: string[], flagged: boolean): Promise<TicketList> {
+    return this.store.updateTickets((current) => list.setFlag(current, keys, flagged));
+  }
+
+  removeTickets(keys: string[]): Promise<TicketList> {
+    return this.store.updateTickets((current) => list.removeTickets(current, keys));
+  }
+
+  reorderTickets(keys: string[]): Promise<TicketList> {
+    return this.store.updateTickets((current) => list.reorderTickets(current, keys));
+  }
+
+  sortTickets(): Promise<TicketList> {
+    return this.store.updateTickets((current) => list.sortByCreated(current));
+  }
+
+  private async saveFound(details: list.TicketDetails[]): Promise<{ list: TicketList; added: string[] }> {
+    // Jira is read before the queued write so tracking never waits on the network.
+    let added: string[] = [];
+    const next = await this.store.updateTickets((current) => {
+      const result = list.addTickets(current, details, this.now());
+      added = result.added;
+      return result.list;
+    });
+    return { list: next, added };
   }
 
   /** Your worklogs that started within [from, to), for the calendar. */

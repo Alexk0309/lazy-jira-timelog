@@ -1,3 +1,4 @@
+import type { TicketDetails } from './core/tickets';
 import { jiraStarted } from './core/time';
 
 /**
@@ -279,6 +280,54 @@ export class JiraClient {
     return (body.issues ?? []).map((i) => ({ key: i.key, summary: i.fields.summary }));
   }
 
+  /** Full details of the given issues; keys Jira doesn't know are left out. */
+  async ticketDetails(keys: string[]): Promise<TicketDetails[]> {
+    // Only well-formed keys go into JQL, so nothing typed can change the query.
+    const valid = [...new Set(keys.map((k) => k.trim().toUpperCase()))].filter((k) => /^[A-Z][A-Z0-9_]+-[1-9]\d*$/.test(k));
+    const found: TicketDetails[] = [];
+    for (let i = 0; i < valid.length; i += 50) {
+      const batch = valid.slice(i, i + 50);
+      try {
+        found.push(...(await this.ticketsByJql(`key in (${batch.join(', ')})`, batch.length)));
+      } catch (err) {
+        // JQL fails as a whole when one key doesn't exist, so look the batch up one by one.
+        if (!(err instanceof JiraError) || err.status !== 400) {
+          throw err;
+        }
+        for (const key of batch) {
+          try {
+            found.push(toTicket(await this.request<RawIssue>('GET', `/rest/api/3/issue/${encodeURIComponent(key)}?fields=${TICKET_FIELDS.join(',')}`)));
+          } catch (inner) {
+            if (!(inner instanceof JiraError) || (inner.status !== 404 && inner.status !== 403)) {
+              throw inner;
+            }
+          }
+        }
+      }
+    }
+    return found;
+  }
+
+  /** Issues matching a JQL query, with what the ticket list shows. */
+  async ticketsByJql(jql: string, max = 100): Promise<TicketDetails[]> {
+    const found: TicketDetails[] = [];
+    let nextPageToken: string | undefined;
+    for (let page = 0; page < 10 && found.length < max; page++) {
+      const body = await this.request<{ issues?: RawIssue[]; nextPageToken?: string; isLast?: boolean }>('POST', '/rest/api/3/search/jql', {
+        jql,
+        fields: TICKET_FIELDS,
+        maxResults: Math.min(100, max - found.length),
+        ...(nextPageToken ? { nextPageToken } : {}),
+      });
+      found.push(...(body.issues ?? []).map(toTicket));
+      nextPageToken = body.nextPageToken;
+      if (!nextPageToken || body.isLast) {
+        break;
+      }
+    }
+    return found.slice(0, max);
+  }
+
   async addWorklog(key: string, input: { started: number; seconds: number; comment: string }): Promise<string> {
     const body = await this.request<{ id: string }>(
       'POST',
@@ -322,6 +371,33 @@ export class JiraClient {
     const text = res.status === 204 ? '' : await res.text();
     return (text ? JSON.parse(text) : undefined) as T;
   }
+}
+
+const TICKET_FIELDS = ['summary', 'status', 'issuetype', 'parent', 'created'];
+
+interface RawIssue {
+  key: string;
+  fields: {
+    summary?: string;
+    status?: { name?: string; statusCategory?: { key?: string } };
+    issuetype?: { name?: string };
+    parent?: { key?: string; fields?: { summary?: string } };
+    created?: string;
+  };
+}
+
+function toTicket(issue: RawIssue): TicketDetails {
+  const f = issue.fields ?? {};
+  const created = f.created ? parseJiraTime(f.created) : NaN;
+  return {
+    key: issue.key,
+    summary: f.summary ?? '',
+    status: f.status?.name ?? '',
+    statusCategory: f.status?.statusCategory?.key ?? '',
+    issueType: f.issuetype?.name ?? '',
+    ...(f.parent?.key ? { parentKey: f.parent.key, parentSummary: f.parent.fields?.summary ?? '' } : {}),
+    created: Number.isFinite(created) ? created : 0,
+  };
 }
 
 async function describeError(res: Response): Promise<string> {
