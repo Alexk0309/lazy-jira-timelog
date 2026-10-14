@@ -654,3 +654,107 @@ textarea {
 .note.ai {
   color: var(--blue);
 }
+
+/* Describe your day */
+.ai-composer {
+  margin-bottom: 8px;
+}
+
+.ai-composer .footnote {
+  margin: 0;
+}
+
+/* Calendar of past worklogs */
+.cal {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 10px;
+}
+
+.cal-head {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 0 6px;
+}
+
+.cal-day {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 58px;
+  padding: 6px 2px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.cal-day:hover {
+  background: var(--surface-2);
+}
+
+.cal-day.weekend .cal-num,
+.cal-day.outside .cal-num,
+.cal-day.future .cal-num {
+  color: var(--text-3);
+}
+
+.cal-num {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-day.today .cal-num {
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.cal-day.selected .cal-num {
+  background: var(--blue);
+  color: #fff;
+}
+
+.cal-time {
+  font-size: 11px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  min-height: 14px;
+}
+
+.cal-bar {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 5px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--blue) calc(var(--fill) * 100%), transparent 0);
+  opacity: 0.7;
+}
+
+.editor input.start {
+  width: 140px;
+  flex: 0 0 auto;
+}
+
+a.btn {
+  text-decoration: none;
+}

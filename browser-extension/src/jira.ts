@@ -26,6 +26,26 @@ export interface Worklog {
   authorAccountId: string;
   started: string;
   timeSpentSeconds: number;
+  /** Plain text of the worklog comment. */
+  comment: string;
+}
+
+/** A worklog you logged, as the calendar shows it. */
+export interface LoggedWork {
+  id: string;
+  key: string;
+  summary: string;
+  /** Epoch ms. */
+  started: number;
+  seconds: number;
+  comment: string;
+}
+
+/** Fields a worklog edit may change. Jira can't move a worklog to another issue. */
+export interface WorklogChange {
+  started: number;
+  seconds: number;
+  comment: string;
 }
 
 export class JiraError extends Error {
@@ -48,6 +68,51 @@ export function toAdf(text: string): unknown {
     version: 1,
     content: lines.map((line) => ({ type: 'paragraph', content: [{ type: 'text', text: line }] })),
   };
+}
+
+/** Reads the text back out of an Atlassian Document Format comment, one line per block. */
+export function fromAdf(doc: unknown): string {
+  if (typeof doc === 'string') {
+    return doc;
+  }
+  const lines: string[] = [];
+  const inline = (node: unknown): string => {
+    const n = node as { type?: string; text?: string; content?: unknown[]; attrs?: { text?: string } };
+    if (!n || typeof n !== 'object') {
+      return '';
+    }
+    if (n.type === 'text') {
+      return n.text ?? '';
+    }
+    if (n.type === 'hardBreak') {
+      return '\n';
+    }
+    if (n.type === 'mention' || n.type === 'emoji') {
+      return n.attrs?.text ?? '';
+    }
+    return (n.content ?? []).map(inline).join('');
+  };
+  const block = (node: unknown): void => {
+    const n = node as { type?: string; content?: unknown[] };
+    if (!n || typeof n !== 'object') {
+      return;
+    }
+    if (n.type === 'doc' || n.type === 'bulletList' || n.type === 'orderedList' || n.type === 'listItem' || n.type === 'blockquote') {
+      (n.content ?? []).forEach(block);
+      return;
+    }
+    const text = inline(n).trim();
+    if (text) {
+      lines.push(text);
+    }
+  };
+  block(doc);
+  return lines.join('\n');
+}
+
+/** Parses Jira's `2026-10-13T09:05:00.000+0800` (no colon in the offset). */
+export function parseJiraTime(value: string): number {
+  return Date.parse(value.replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
 }
 
 /** Minimal Jira Cloud REST v3 client for worklogs. */
@@ -128,14 +193,64 @@ export class JiraClient {
   /** Worklogs on an issue that started within [from, to). */
   async worklogs(key: string, from: number, to: number): Promise<Worklog[]> {
     const body = await this.request<{
-      worklogs: { id: string; author?: { accountId: string }; started: string; timeSpentSeconds: number }[];
+      worklogs: { id: string; author?: { accountId: string }; started: string; timeSpentSeconds: number; comment?: unknown }[];
     }>('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/worklog?startedAfter=${from}&startedBefore=${to}&maxResults=5000`);
     return body.worklogs.map((w) => ({
       id: w.id,
       authorAccountId: w.author?.accountId ?? '',
       started: w.started,
       timeSpentSeconds: w.timeSpentSeconds,
+      comment: w.comment ? fromAdf(w.comment) : '',
     }));
+  }
+
+  /**
+   * Your own worklogs that started within [from, to), across all issues.
+   * JQL finds the issues (padded a day each side for time zones), then each
+   * issue's worklogs are read and filtered to you and the exact range.
+   */
+  async myWorklogs(from: number, to: number): Promise<LoggedWork[]> {
+    const me = await this.myself();
+    const jql = `worklogAuthor = currentUser() AND worklogDate >= "${jqlDay(from - 86_400_000)}" AND worklogDate <= "${jqlDay(to + 86_400_000)}"`;
+    const issues: IssueSummary[] = [];
+    let nextPageToken: string | undefined;
+    for (let page = 0; page < 10; page++) {
+      const body = await this.request<{ issues?: { key: string; fields: { summary: string } }[]; nextPageToken?: string; isLast?: boolean }>(
+        'POST',
+        '/rest/api/3/search/jql',
+        { jql, fields: ['summary'], maxResults: 100, ...(nextPageToken ? { nextPageToken } : {}) },
+      );
+      issues.push(...(body.issues ?? []).map((i) => ({ key: i.key, summary: i.fields.summary })));
+      nextPageToken = body.nextPageToken;
+      if (!nextPageToken || body.isLast) {
+        break;
+      }
+    }
+    const result: LoggedWork[] = [];
+    for (const issue of issues) {
+      for (const w of await this.worklogs(issue.key, from, to)) {
+        const started = parseJiraTime(w.started);
+        if (w.authorAccountId === me.accountId && started >= from && started < to) {
+          result.push({ id: w.id, key: issue.key, summary: issue.summary, started, seconds: w.timeSpentSeconds, comment: w.comment });
+        }
+      }
+    }
+    return result.sort((a, b) => a.started - b.started);
+  }
+
+  async updateWorklog(key: string, id: string, change: WorklogChange): Promise<void> {
+    await this.request(
+      'PUT',
+      `/rest/api/3/issue/${encodeURIComponent(key)}/worklog/${encodeURIComponent(id)}?adjustEstimate=auto&notifyUsers=false`,
+      { started: jiraStarted(change.started), timeSpentSeconds: change.seconds, comment: toAdf(change.comment) },
+    );
+  }
+
+  async deleteWorklog(key: string, id: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/rest/api/3/issue/${encodeURIComponent(key)}/worklog/${encodeURIComponent(id)}?adjustEstimate=auto&notifyUsers=false`,
+    );
   }
 
   /**
@@ -203,7 +318,9 @@ export class JiraClient {
     if (!res.ok) {
       throw new JiraError(await describeError(res), res.status);
     }
-    return (await res.json()) as T;
+    // DELETE answers 204 with no body.
+    const text = res.status === 204 ? '' : await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
   }
 }
 
@@ -225,6 +342,13 @@ async function describeError(res: Response): Promise<string> {
     default:
       return `Jira returned ${res.status} ${res.statusText}. ${detail}`.trim();
   }
+}
+
+/** JQL day literal (yyyy-MM-dd) in local time. */
+function jqlDay(t: number): string {
+  const d = new Date(t);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 /** JQL date literal (yyyy/MM/dd HH:mm) in local time. */

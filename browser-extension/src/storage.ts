@@ -1,4 +1,4 @@
-import type { AiSuggestion } from './ai';
+import type { AiNewEntry, AiSuggestion } from './ai';
 import { localDay } from './core/time';
 import type { CommitRecord, Heartbeat, SettledEntry } from './core/types';
 
@@ -41,6 +41,10 @@ export interface AiState {
   status: 'running' | 'done' | 'error';
   at: number;
   suggestions?: AiSuggestion[];
+  /** Entries for work from the person's day summary that nothing tracked. */
+  added?: AiNewEntry[];
+  /** Indexes into `added` already logged or removed, so they don't come back. */
+  consumed?: number[];
   error?: string;
 }
 

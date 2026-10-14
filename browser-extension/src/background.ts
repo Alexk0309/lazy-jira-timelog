@@ -122,8 +122,12 @@ const handlers: Handlers = {
   connect: () => service.connect(),
   testCursor: () => service.testCursor(),
   // Any extension API call keeps the worker alive while Cursor thinks.
-  aiSuggest: (p) => service.aiSuggest(p.day, () => chrome.runtime.getPlatformInfo()),
+  aiSuggest: (p) => service.aiSuggest(p.day, p.summary, () => chrome.runtime.getPlatformInfo()),
   aiState: () => service.aiState(),
+  consumeAiEntry: (p) => service.consumeAiEntry(p.at, p.index),
+  logged: (p) => service.logged(p.from, p.to),
+  editWorklog: (p) => service.editWorklog(p),
+  deleteWorklog: (p) => service.deleteWorklog(p.key, p.id),
 };
 
 chrome.runtime.onMessage.addListener((msg: Request, _sender, sendResponse: (r: Reply<unknown>) => void) => {

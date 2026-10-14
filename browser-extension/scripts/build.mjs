@@ -20,6 +20,7 @@ const ctx = await esbuild.context({
     background: 'src/background.ts',
     review: 'src/ui/review.ts',
     options: 'src/ui/options.ts',
+    calendar: 'src/ui/calendar.ts',
   },
   bundle: true,
   format: 'esm',

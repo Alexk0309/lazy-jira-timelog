@@ -10,6 +10,7 @@ import { chromium } from 'playwright';
 const shots = process.argv[2] ? resolve(process.argv[2]) : null;
 const posted = [];
 const cursorCalls = [];
+const edits = [];
 
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -35,7 +36,14 @@ const server = createServer((req, res) => {
       const rows = data.rows.map((r) =>
         r.issue ? { id: r.id, comment: `Shipped ${r.title.toLowerCase()}.` } : { id: r.id, comment: 'Fixed the payout CSV export.', key: 'PAY-9', reason: 'the PR is about the payout CSV export' },
       );
-      return send({ id: 'run-1', status: 'FINISHED', result: '```json\n' + JSON.stringify({ rows }) + '\n```' });
+      // With a day summary: a meeting on an assigned issue, and a guess at an issue that isn't yours.
+      const added = data.personSummary
+        ? [
+            { key: 'PAY-8', minutes: 45, comment: 'Walked finance through the payout reports.', reason: 'you mentioned the finance demo' },
+            { key: 'HR-1', minutes: 30, comment: 'Interviewed a backend candidate.' },
+          ]
+        : undefined;
+      return send({ id: 'run-1', status: 'FINISHED', result: '```json\n' + JSON.stringify({ rows, added }) + '\n```' });
     }
     if (p === '/v1/agents/bc-1' && req.method === 'DELETE') {
       cursorCalls.push({ deleted: true });
@@ -56,13 +64,34 @@ const server = createServer((req, res) => {
         ],
       });
     }
+    if (p === '/rest/api/3/search/jql' && JSON.parse(body).jql.startsWith('worklogAuthor = currentUser()')) {
+      const keys = [...new Set(posted.filter((w) => !w.deleted).map((w) => w.key))];
+      return send({ issues: keys.map((key) => ({ key, fields: { summary: `Summary of ${key}` } })), isLast: true });
+    }
     if (p === '/rest/api/3/search/jql') return send({ issues: [{ key: 'OPS-12', fields: { summary: 'Rotate staging credentials' } }] });
     if (p === '/rest/api/3/issue/picker') return send({ sections: [{ issues: [{ key: 'OPS-12', summaryText: 'Rotate staging credentials' }] }] });
     if (/^\/rest\/api\/3\/issue\/[A-Z]+-\d+\/worklog$/.test(p) && req.method === 'POST') {
-      posted.push({ key: p.split('/')[5], ...JSON.parse(body), xsrf: req.headers['x-atlassian-token'] });
-      return send({ id: String(1000 + posted.length) }, 201);
+      const id = String(1001 + posted.length);
+      posted.push({ id, key: p.split('/')[5], ...JSON.parse(body), xsrf: req.headers['x-atlassian-token'] });
+      return send({ id }, 201);
     }
-    if (p.endsWith('/worklog')) return send({ worklogs: [] });
+    const one = /^\/rest\/api\/3\/issue\/([A-Z]+-\d+)\/worklog\/(\d+)$/.exec(p);
+    if (one) {
+      const log = posted.find((w) => w.key === one[1] && w.id === one[2] && !w.deleted);
+      if (!log) return send({ errorMessages: ['no worklog'] }, 404);
+      edits.push({ method: req.method, key: one[1], id: one[2], body: body ? JSON.parse(body) : null });
+      if (req.method === 'DELETE') {
+        log.deleted = true;
+        res.writeHead(204);
+        return res.end();
+      }
+      Object.assign(log, JSON.parse(body));
+      return send({ id: log.id });
+    }
+    if (p.endsWith('/worklog')) {
+      const key = p.split('/')[5];
+      return send({ worklogs: posted.filter((w) => w.key === key && !w.deleted).map((w) => ({ ...w, author: { accountId: 'me' } })) });
+    }
     if (p === '/rest/api/3/issue/PAY-7') return send({ key: 'PAY-7', fields: { summary: 'Refund flow for card payments' } });
     if (p === '/rest/api/3/issue/PAY-8') return send({ key: 'PAY-8', fields: { summary: 'Payout reports for finance' } });
     send({ errorMessages: ['not found'] }, 404);
@@ -174,6 +203,7 @@ try {
   await review.reload();
   await review.waitForSelector('.ai-button');
   await review.click('.ai-button');
+  await review.click('.ai-composer .btn-primary');
   await review.waitForSelector('.note.ai', { timeout: 15000 });
   const matched = await review.$eval('.row:has(.note.ai)', (r) => `${r.querySelector('.row-key').textContent}: ${r.querySelector('.note').textContent}`);
   console.log('AI match:', matched);
@@ -193,6 +223,58 @@ try {
   const pay9 = posted.find((p) => p.key === 'PAY-9');
   console.log('posted after AI:', JSON.stringify(pay9));
   if (!pay9 || pay9.timeSpentSeconds !== 1800 || pay9.comment.content[0].content[0].text !== 'Fixed the payout CSV export.') fail('AI-matched entry did not post as expected');
+
+  // 6. Describe the day: AI adds entries for work nothing tracked.
+  await review.click('.ai-button');
+  await review.fill('.ai-composer textarea', 'Demoed payout reports to finance for 45m, then a 30 minute interview.');
+  if (shots) await review.screenshot({ path: join(shots, 'review-summary.png'), fullPage: true });
+  await review.click('.ai-composer .btn-primary');
+  await review.waitForFunction(() => document.querySelectorAll('.note.ai').length >= 2, null, { timeout: 15000 });
+  const added = await review.$$eval('.row', (rs) =>
+    rs.filter((r) => /Added from your summary/.test(r.textContent)).map((r) => `${r.querySelector('.row-key').textContent} ${r.querySelector('.row-time').textContent}`),
+  );
+  console.log('AI added from summary:', added.join(' | '));
+  if (!cursorCalls.at(-2)?.body?.prompt.text.includes('"personSummary": "Demoed payout reports')) fail('summary was not sent to Cursor');
+  if (added.join('|') !== 'PAY-8 45m|Unassigned 30m') fail('unexpected entries from the day summary');
+  if (shots) await review.screenshot({ path: join(shots, 'review-summary-ai.png'), fullPage: true });
+  await review.click('.row:has(.row-key:text-is("PAY-8")):has(.note.ai) .row-main');
+  await review.click('.row.open .btn-primary');
+  await review.waitForFunction(() => !document.querySelector('.row.open'));
+  const demo = posted.find((p) => p.key === 'PAY-8');
+  console.log('posted from summary:', JSON.stringify(demo));
+  if (!demo || demo.timeSpentSeconds !== 2700) fail('summary entry did not post as expected');
+
+  // 7. Calendar: see, edit and delete what was logged.
+  const cal = await context.newPage();
+  await cal.goto(page('calendar.html'));
+  await cal.waitForSelector('#day .row', { timeout: 10000 });
+  const logged = await cal.$$eval('#day .row', (rs) => rs.map((r) => `${r.querySelector('.row-key').textContent} ${r.querySelector('.row-time').textContent}`));
+  console.log('calendar day:', logged.join(' | '), '· month:', await cal.textContent('#month-total'));
+  if (logged.length !== 3) fail('calendar should list the three worklogs logged today');
+  if (shots) await cal.screenshot({ path: join(shots, 'calendar.png'), fullPage: true });
+  await cal.click('#day .row:has(.row-key:text-is("PAY-7")) .row-main');
+  await cal.fill('.row.open .duration', '1h');
+  await cal.fill('.row.open textarea', 'Card refunds, edited');
+  if (shots) await cal.screenshot({ path: join(shots, 'calendar-edit.png'), fullPage: true });
+  await cal.click('.row.open .btn-primary');
+  await cal.waitForFunction(() => !document.querySelector('.row.open'));
+  await cal.click('#day .row:has(.row-key:text-is("PAY-9")) .row-main');
+  await cal.click('.row.open .btn-danger');
+  await cal.click('.row.open .btn-danger');
+  await cal.waitForFunction(() => document.querySelectorAll('#day .row').length === 2);
+  console.log('calendar edits:', JSON.stringify(edits.map((e) => [e.method, e.key, e.body?.timeSpentSeconds ?? null])));
+  const put = edits.find((e) => e.method === 'PUT');
+  if (!put || put.key !== 'PAY-7' || put.body.timeSpentSeconds !== 3600 || put.body.comment.content[0].content[0].text !== 'Card refunds, edited') fail('calendar edit did not reach Jira');
+  if (!edits.some((e) => e.method === 'DELETE' && e.key === 'PAY-9')) fail('calendar delete did not reach Jira');
+  await cal.reload();
+  await cal.waitForSelector('#day .row');
+  const after = await cal.$$eval('#day .row', (rs) => rs.map((r) => `${r.querySelector('.row-key').textContent} ${r.querySelector('.row-time').textContent}`));
+  console.log('calendar after reload:', after.join(' | '));
+  if (after.join('|') !== 'PAY-7 1h|PAY-8 45m') fail('calendar does not show the edits after reload');
+  if (shots) {
+    await cal.emulateMedia({ colorScheme: 'dark' });
+    await cal.screenshot({ path: join(shots, 'calendar-dark.png'), fullPage: true });
+  }
 
   // Popup-sized and dark-mode views.
   const popup = await context.newPage();

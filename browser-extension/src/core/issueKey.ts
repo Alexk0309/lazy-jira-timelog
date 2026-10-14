@@ -15,21 +15,27 @@ const NOT_KEYS = new Set(['UTF-8', 'UTF-16', 'ISO-8601', 'SHA-1', 'SHA-256', 'RF
  * upper-case keys count, otherwise `fix-42` or `release-2` would match.
  */
 export function extractIssueKey(text: string | null | undefined, projectKeys?: string[]): string | null {
+  return extractIssueKeys(text, projectKeys)[0] ?? null;
+}
+
+/** Every Jira issue key in `text`, in order and without repeats. Same rules as `extractIssueKey`. */
+export function extractIssueKeys(text: string | null | undefined, projectKeys?: string[]): string[] {
   if (!text) {
-    return null;
+    return [];
   }
   const allowed = projectKeys && projectKeys.length > 0 ? new Set(projectKeys.map((k) => k.toUpperCase())) : null;
+  const keys: string[] = [];
   for (const match of text.matchAll(KEY_PATTERN)) {
     const key = match[1].toUpperCase();
-    if (NOT_KEYS.has(key)) {
+    if (NOT_KEYS.has(key) || keys.includes(key)) {
       continue;
     }
     if (allowed ? !allowed.has(key.slice(0, key.lastIndexOf('-'))) : match[1] !== key) {
       continue;
     }
-    return key;
+    keys.push(key);
   }
-  return null;
+  return keys;
 }
 
 export interface ResolveInput {

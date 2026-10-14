@@ -129,7 +129,7 @@ describe('Service.aiSuggest', () => {
     const service = new Service(store, apis.fetchImpl, () => base + 120 * MIN, async () => {});
     const day = (await service.drafts())[0].day;
 
-    const suggestions = await service.aiSuggest(day);
+    const { rows: suggestions } = await service.aiSuggest(day);
     expect(suggestions.map((s) => [s.id, s.key ?? null, s.comment])).toEqual([
       ['PAY-7', null, 'Built refunds.'],
       ['~pr51', 'PAY-8', 'Fixed CSV export.'],
@@ -138,6 +138,42 @@ describe('Service.aiSuggest', () => {
     expect(apis.prompt()).toContain('"issue": null');
     expect(apis.prompt()).not.toContain('acme/api');
     expect((await store.aiState())?.status).toBe('done');
+  });
+
+  it('passes a day summary and the existing issues named in it', async () => {
+    const store = await aiStore();
+    await store.setProjectKeys(['PAY', 'OPS']);
+    const reply = '{"rows":[],"added":[{"key":"OPS-3","minutes":60,"comment":"Rotated credentials."},{"key":"OPS-404","minutes":30,"comment":"Ghost."}]}';
+    const apis = fakeApis(reply);
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/rest/api/3/issue/OPS-3')) return json({ key: 'OPS-3', fields: { summary: 'Rotate staging credentials' } });
+      if (url.includes('/rest/api/3/issue/OPS-404')) return json({ errorMessages: ['nope'] }, 404);
+      return apis.fetchImpl(url, init);
+    });
+    const service = new Service(store, fetchImpl, () => base + 120 * MIN, async () => {});
+    const day = (await service.drafts())[0].day;
+
+    const result = await service.aiSuggest(day, 'Rotated creds on ops-3 for 1h, then looked at OPS-404');
+    expect(apis.prompt()).toContain('"personSummary": "Rotated creds on ops-3');
+    expect(apis.prompt()).toContain('"key": "OPS-3"');
+    expect(apis.prompt()).not.toContain('"key": "OPS-404"');
+    expect(result.added).toEqual([
+      { key: 'OPS-3', summary: 'Rotate staging credentials', minutes: 60, comment: 'Rotated credentials.' },
+      { minutes: 30, comment: 'Ghost.' },
+    ]);
+    expect((await store.aiState())?.added).toHaveLength(2);
+
+    await service.consumeAiEntry((await store.aiState())!.at, 0);
+    expect((await store.aiState())?.consumed).toEqual([0]);
+  });
+
+  it('works from a summary alone on a day with nothing tracked', async () => {
+    const store = await aiStore();
+    const apis = fakeApis('{"added":[{"minutes":45,"comment":"Sprint planning."}]}');
+    const service = new Service(store, apis.fetchImpl, () => base + 120 * MIN, async () => {});
+    await expect(service.aiSuggest('2026-10-01')).rejects.toThrow(/nothing to fill in/);
+    expect((await service.aiSuggest('2026-10-01', 'Sprint planning 45m')).added).toEqual([{ minutes: 45, comment: 'Sprint planning.' }]);
+    expect(apis.prompt()).toContain('"rows": []');
   });
 
   it('records a failure so the popup can show it later', async () => {
@@ -152,5 +188,63 @@ describe('Service.aiSuggest', () => {
     const service = new Service(await seeded(), vi.fn(), () => base + 60 * MIN);
     const day = (await service.drafts())[0].day;
     await expect(service.aiSuggest(day)).rejects.toThrow(/Cursor API key/);
+  });
+});
+
+describe('Service calendar', () => {
+  const day = (h: number, m = 0) => new Date(2026, 9, 13, h, m).getTime();
+  const started = (t: number) => {
+    const d = new Date(t);
+    const off = -d.getTimezoneOffset();
+    const p = (n: number) => String(Math.abs(n)).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:00.000${off >= 0 ? '+' : '-'}${p(Math.trunc(off / 60))}${p(off % 60)}`;
+  };
+
+  it('lists only your worklogs in the range, with plain-text comments', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method} ${url}`);
+      if (url.endsWith('/myself')) return json({ accountId: 'me', displayName: 'Alex' });
+      if (url.endsWith('/search/jql')) {
+        expect(JSON.parse(init?.body as string).jql).toMatch(/^worklogAuthor = currentUser\(\) AND worklogDate >= "2026-10-12"/);
+        return json({ issues: [{ key: 'PAY-7', fields: { summary: 'Refunds' } }], isLast: true });
+      }
+      if (url.includes('/issue/PAY-7/worklog')) {
+        return json({
+          worklogs: [
+            { id: '1', author: { accountId: 'me' }, started: started(day(9)), timeSpentSeconds: 3600, comment: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Built refunds' }] }] } },
+            { id: '2', author: { accountId: 'someone' }, started: started(day(10)), timeSpentSeconds: 1800 },
+            { id: '3', author: { accountId: 'me' }, started: started(day(23, 59) + 60_000), timeSpentSeconds: 900 },
+          ],
+        });
+      }
+      return json({}, 404);
+    });
+    const store = new Store(new FakeKv());
+    await store.saveSettings({ siteUrl: 'https://team.atlassian.net' });
+    const service = new Service(store, fetchImpl);
+    const logs = await service.logged(day(0), day(0) + 86_400_000);
+    expect(logs).toEqual([{ id: '1', key: 'PAY-7', summary: 'Refunds', started: day(9), seconds: 3600, comment: 'Built refunds' }]);
+  });
+
+  it('edits and deletes a worklog in Jira', async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return init?.method === 'DELETE' ? new Response(null, { status: 204 }) : json({ id: '1' });
+    });
+    const store = new Store(new FakeKv());
+    await store.saveSettings({ siteUrl: 'https://team.atlassian.net' });
+    const service = new Service(store, fetchImpl);
+
+    await expect(service.editWorklog({ key: 'PAY-7', id: '1', started: day(9), duration: 'soon', comment: '' })).rejects.toThrow(/duration/);
+    await service.editWorklog({ key: 'PAY-7', id: '1', started: day(9, 30), duration: '1h 15m', comment: 'Refunds' });
+    expect(calls[0].init?.method).toBe('PUT');
+    expect(calls[0].url).toBe('https://team.atlassian.net/rest/api/3/issue/PAY-7/worklog/1?adjustEstimate=auto&notifyUsers=false');
+    expect(JSON.parse(calls[0].init?.body as string)).toMatchObject({ timeSpentSeconds: 4500, started: started(day(9, 30)) });
+
+    await service.deleteWorklog('PAY-7', '1');
+    expect(calls[1].init?.method).toBe('DELETE');
+    expect(calls[1].url).toBe('https://team.atlassian.net/rest/api/3/issue/PAY-7/worklog/1?adjustEstimate=auto&notifyUsers=false');
   });
 });

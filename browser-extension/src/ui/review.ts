@@ -1,4 +1,4 @@
-import type { AiSuggestion } from '../ai';
+import type { AiNewEntry, AiSuggestion } from '../ai';
 import { isUnassignedKey } from '../classify';
 import { roundToStep } from '../core/drafts';
 import { dayStart, formatDuration, parseDuration } from '../core/time';
@@ -16,8 +16,11 @@ interface Row {
   duration: string;
   started: number;
   comment: string;
-  kind: 'tracked' | 'suggested';
+  /** tracked: measured by the browser; suggested: touched in Jira today; added: from your day summary. */
+  kind: 'tracked' | 'suggested' | 'added';
   done: boolean;
+  /** For added rows: which AI run and entry it came from. */
+  ai?: { at: number; index: number };
   note?: { text: string; level: 'warn' | 'error' | 'ok' | 'ai' };
 }
 
@@ -35,12 +38,20 @@ let nextId = 1;
 let aiEnabled = false;
 /** Day Cursor is currently filling in, if any. */
 let aiBusyDay: string | null = null;
+/** Day whose "describe your day" box is open, if any. */
+let aiComposerDay: string | null = null;
 const summaries = new Map<string, string | null>();
 
 /** Saved AI suggestions older than this aren't re-applied when the popup opens. */
 const AI_FRESH_MS = 12 * 3_600_000;
 
 $('settings').addEventListener('click', () => chrome.runtime.openOptionsPage());
+$('calendar').addEventListener('click', () => {
+  void chrome.tabs.create({ url: chrome.runtime.getURL('calendar.html') });
+  if (isPopup) {
+    window.close();
+  }
+});
 $('setup-button').addEventListener('click', () => chrome.runtime.openOptionsPage());
 const expand = $('expand');
 expand.hidden = !isPopup;
@@ -151,18 +162,30 @@ async function loadManualLogs(): Promise<void> {
 
 function render(): void {
   daysEl.replaceChildren();
-  const tracked = rows.filter((r) => r.kind === 'tracked');
+  const tracked = rows.filter((r) => r.kind !== 'suggested');
   const suggested = rows.filter((r) => r.kind === 'suggested' && !r.done);
   const days = [...new Set(tracked.map((r) => r.day))];
+  // With AI on, today is always there so you can describe a day nothing tracked.
+  if (aiEnabled && !days.includes(today)) {
+    days.unshift(today);
+  }
 
   for (const day of days) {
     const dayRows = tracked.filter((r) => r.day === day);
     const total = dayRows.filter((r) => !r.done).reduce((sum, r) => sum + (parseDuration(r.duration) ?? 0), 0);
     const title = el('h2', { class: 'section-title' }, el('span', {}, `${dayLabel(day)}${total > 0 ? ` · ${formatDuration(total * 1000)}` : ''}`));
-    if (aiEnabled && dayRows.some((r) => !r.done)) {
+    if (aiEnabled && (day === today || dayRows.some((r) => !r.done))) {
       title.append(aiButton(day));
     }
-    daysEl.append(title, el('div', { class: 'group' }, ...dayRows.map(renderRow)));
+    daysEl.append(title);
+    if (aiComposerDay === day && aiBusyDay === null) {
+      daysEl.append(aiComposer(day));
+    }
+    if (dayRows.length > 0) {
+      daysEl.append(el('div', { class: 'group' }, ...dayRows.map(renderRow)));
+    } else if (aiComposerDay !== day) {
+      daysEl.append(el('p', { class: 'footnote' }, 'Nothing tracked yet. Describe your day and AI drafts the entries.'));
+    }
   }
   if (suggested.length > 0) {
     daysEl.append(
@@ -172,8 +195,8 @@ function render(): void {
     );
   }
 
-  const open = rows.filter((r) => !r.done && r.kind === 'tracked');
-  $('empty').hidden = open.length > 0 || suggested.length > 0 || !$('setup').hidden;
+  const open = rows.filter((r) => !r.done && r.kind !== 'suggested');
+  $('empty').hidden = open.length > 0 || suggested.length > 0 || !$('setup').hidden || aiEnabled;
   renderTotals();
 }
 
@@ -303,7 +326,7 @@ function renderEditor(row: Row): HTMLElement {
   comment.value = row.comment;
   comment.addEventListener('input', () => (row.comment = comment.value));
 
-  const discard = el('button', { class: 'btn btn-danger', type: 'button' }, row.kind === 'suggested' ? 'Hide' : 'Discard');
+  const discard = el('button', { class: 'btn btn-danger', type: 'button' }, { tracked: 'Discard', suggested: 'Hide', added: 'Remove' }[row.kind]);
   discard.addEventListener('click', () => void discardRow(row));
   const split = el('button', { class: 'btn btn-plain', type: 'button' }, 'Split');
   split.addEventListener('click', () => splitRow(row));
@@ -349,6 +372,10 @@ function updateSubtitles(): void {
 }
 
 function subtitle(row: Row): string {
+  if (row.kind === 'added') {
+    // What you described is the point of an added row; the issue name is in the editor.
+    return row.comment.split('\n')[0] || summaries.get(row.targetKey) || '';
+  }
   if (!row.targetKey) {
     // For an unassigned PR the comment is its title, which says what the time was.
     return (isUnassignedKey(row.sourceKey) && row.comment.split('\n')[0]) || 'Choose the issue this time belongs to';
@@ -383,6 +410,7 @@ async function logRows(targets: Row[]): Promise<void> {
       row.done = true;
       row.note = undefined;
       logged++;
+      consumeAi(row);
       if (openId === row.id) {
         openId = null;
       }
@@ -416,9 +444,16 @@ async function discardRow(row: Row): Promise<void> {
       return;
     }
   }
+  consumeAi(row);
   rows = rows.filter((r) => r.id !== row.id);
   openId = null;
   render();
+}
+
+function consumeAi(row: Row): void {
+  if (row.ai) {
+    void call('consumeAiEntry', row.ai).catch(() => undefined);
+  }
 }
 
 function splitRow(row: Row): void {
@@ -444,23 +479,75 @@ function aiButton(day: string): HTMLElement {
   const busy = aiBusyDay === day;
   const button = el(
     'button',
-    { class: `ai-button${busy ? ' busy' : ''}`, type: 'button', title: 'Ask Cursor to write comments and match unassigned time' },
+    {
+      class: `ai-button${busy ? ' busy' : ''}`,
+      type: 'button',
+      title: 'Ask Cursor to write comments, match unassigned time and add what you describe',
+      'aria-expanded': String(aiComposerDay === day),
+    },
     sparkle(),
     busy ? 'Thinking…' : 'Fill in with AI',
   ) as HTMLButtonElement;
   button.disabled = aiBusyDay !== null;
-  button.addEventListener('click', () => void fillInWithAi(day));
+  button.addEventListener('click', () => {
+    aiComposerDay = aiComposerDay === day ? null : day;
+    render();
+    document.querySelector<HTMLTextAreaElement>('.ai-composer textarea')?.focus();
+  });
   return button;
 }
 
-async function fillInWithAi(day: string): Promise<void> {
+/** The "describe your day" box. Empty is fine: AI then only fills in tracked rows. */
+function aiComposer(day: string): HTMLElement {
+  const text = el('textarea', {
+    rows: '3',
+    'aria-label': 'Describe your day',
+    placeholder: 'Optional: what did you do? e.g. "Standup 15m, 1h pairing with Sam on PAY-12, reviewed the payout PR, sprint planning 45m"',
+  }) as HTMLTextAreaElement;
+  text.value = loadSummaryDraft(day);
+  text.addEventListener('input', () => saveSummaryDraft(day, text.value));
+  const hasRows = rows.some((r) => r.day === day && r.kind !== 'suggested' && !r.done);
+  const go = el('button', { class: 'btn btn-primary', type: 'button' }, 'Fill in') as HTMLButtonElement;
+  const sync = () => (go.disabled = !hasRows && !text.value.trim());
+  text.addEventListener('input', sync);
+  sync();
+  go.addEventListener('click', () => void fillInWithAi(day, text.value));
+  text.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !go.disabled) {
+      void fillInWithAi(day, text.value);
+    }
+  });
+  const cancel = el('button', { class: 'btn btn-plain', type: 'button' }, 'Cancel');
+  cancel.addEventListener('click', () => {
+    aiComposerDay = null;
+    render();
+  });
+  return el(
+    'div',
+    { class: 'card ai-composer' },
+    text,
+    el(
+      'p',
+      { class: 'footnote' },
+      hasRows
+        ? 'Cursor writes comments for tracked time, uses times you mention, and adds entries for work nothing tracked. You review everything before logging.'
+        : 'Cursor turns this into entries with times and comments. You review everything before logging.',
+    ),
+    el('div', { class: 'actions' }, el('span', { class: 'spacer' }), cancel, go),
+  );
+}
+
+async function fillInWithAi(day: string, summary = ''): Promise<void> {
   aiBusyDay = day;
+  aiComposerDay = null;
   render();
   try {
-    const suggestions = await call('aiSuggest', { day });
-    const changed = applySuggestions(day, suggestions);
+    const result = await call('aiSuggest', { day, summary });
+    const at = (await call('aiState').catch(() => undefined))?.at ?? Date.now();
+    const changed = applyResult(day, result.rows, result.added, at);
     toast(changed > 0 ? `Filled in ${changed} ${changed === 1 ? 'entry' : 'entries'}. Check them, then log.` : 'Cursor had nothing to add.');
   } catch (err) {
+    aiComposerDay = day;
     toast((err as Error).message);
   } finally {
     aiBusyDay = null;
@@ -468,14 +555,18 @@ async function fillInWithAi(day: string): Promise<void> {
   }
 }
 
-/** Puts AI suggestions into the day's open rows. Only unassigned rows get an issue. */
-function applySuggestions(day: string, suggestions: AiSuggestion[]): number {
+/**
+ * Puts an AI answer into the day: comments and times on open rows, an issue
+ * for unassigned rows only, and new rows for work from the day summary.
+ */
+function applyResult(day: string, suggestions: AiSuggestion[], added: AiNewEntry[] = [], at = 0, consumed: number[] = []): number {
   let changed = 0;
   for (const s of suggestions) {
     const row = rows.find((r) => r.day === day && r.kind === 'tracked' && !r.done && r.sourceKey === s.id);
     if (!row) {
       continue;
     }
+    const notes: string[] = [];
     if (s.comment) {
       row.comment = s.comment;
     }
@@ -484,10 +575,53 @@ function applySuggestions(day: string, suggestions: AiSuggestion[]): number {
       if (s.summary) {
         summaries.set(s.key, s.summary);
       }
-      row.note = { text: `Matched by AI${s.reason ? `: ${s.reason}` : ''}`, level: 'ai' };
+      notes.push(`Matched by AI${s.reason ? `: ${s.reason}` : ''}`);
+    }
+    if (s.minutes) {
+      const tracked = row.duration;
+      row.duration = formatDuration(roundToStep(s.minutes * 60_000, roundMinutes) * 1000);
+      if (row.duration !== tracked) {
+        notes.push(`Time from your summary (tracked ${tracked})`);
+      }
+    }
+    if (notes.length > 0) {
+      row.note = { text: notes.join(' · '), level: 'ai' };
     }
     changed++;
   }
+
+  // A fresh answer replaces entries a previous one added and you haven't logged.
+  rows = rows.filter((r) => !(r.kind === 'added' && r.day === day && !r.done));
+  // Added entries go after the day's tracked work so worklogs don't overlap.
+  let started = Math.max(
+    dayStart(day) + 9 * 3_600_000,
+    ...rows.filter((r) => r.day === day && r.kind === 'tracked').map((r) => r.started + (parseDuration(r.duration) ?? 0) * 1000),
+  );
+  added.forEach((entry, index) => {
+    if (consumed.includes(index)) {
+      return;
+    }
+    const seconds = roundToStep(entry.minutes * 60_000, roundMinutes);
+    if (entry.key && entry.summary) {
+      summaries.set(entry.key, entry.summary);
+    }
+    rows.push({
+      id: String(nextId++),
+      day,
+      sourceKey: `ai:${index}`,
+      targetKey: entry.key ?? '',
+      rawMs: 0,
+      duration: formatDuration(seconds * 1000),
+      started,
+      comment: entry.comment,
+      kind: 'added',
+      done: false,
+      ai: { at, index },
+      note: { text: `Added from your summary${entry.reason ? `: ${entry.reason}` : ''}`, level: 'ai' },
+    });
+    started += seconds * 1000;
+    changed++;
+  });
   return changed;
 }
 
@@ -503,10 +637,31 @@ async function resumeAi(): Promise<void> {
     }
     aiBusyDay = null;
   }
-  if (state?.status === 'done' && state.suggestions && Date.now() - state.at < AI_FRESH_MS) {
-    applySuggestions(state.day, state.suggestions);
+  if (state?.status === 'done' && Date.now() - state.at < AI_FRESH_MS) {
+    applyResult(state.day, state.suggestions ?? [], state.added ?? [], state.at, state.consumed ?? []);
   }
   render();
+}
+
+/** Unsent day summaries survive the popup closing; they stay on this computer only. */
+function loadSummaryDraft(day: string): string {
+  try {
+    return localStorage.getItem(`summary:${day}`) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function saveSummaryDraft(day: string, text: string): void {
+  try {
+    if (text.trim()) {
+      localStorage.setItem(`summary:${day}`, text);
+    } else {
+      localStorage.removeItem(`summary:${day}`);
+    }
+  } catch {
+    // Storage blocked; the draft just won't survive closing the popup.
+  }
 }
 
 // ---------- Helpers ----------
