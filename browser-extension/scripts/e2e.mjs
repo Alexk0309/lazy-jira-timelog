@@ -376,6 +376,34 @@ try {
   if (shots) await popup.screenshot({ path: join(shots, 'popup.png') });
   await popup.emulateMedia({ colorScheme: 'dark' });
   if (shots) await popup.screenshot({ path: join(shots, 'popup-dark.png') });
+  await popup.emulateMedia({ colorScheme: 'light' });
+
+  // Tabs switch views inside the popup without opening a browser tab.
+  const pagesBefore = context.pages().length;
+  for (const [label, file, ready] of [
+    ['Tickets', 'tickets.html', '#list'],
+    ['Calendar', 'calendar.html', '#cal .cal-day'],
+    ['Review', 'review.html', '#days'],
+  ]) {
+    await popup.click(`#tabs a:text-is("${label}")`);
+    await popup.waitForURL(`**/${file}?popup=1`);
+    await popup.waitForSelector(ready);
+    await popup.waitForTimeout(400);
+    const current = await popup.textContent('#tabs a[aria-current="page"]');
+    if (current !== label) fail(`popup tab bar marks ${current} instead of ${label}`);
+    if (!(await popup.evaluate(() => document.body.classList.contains('popup')))) fail(`${file} lost the popup layout`);
+    if (shots && label !== 'Review') await popup.screenshot({ path: join(shots, `popup-${label.toLowerCase()}.png`) });
+  }
+  if (context.pages().length !== pagesBefore) fail('switching popup tabs opened a new browser tab');
+  console.log('popup tabs: switched in place');
+
+  // In a full tab, Settings is a tab too.
+  await cal.bringToFront();
+  await cal.click('#tabs a:text-is("Settings")');
+  await cal.waitForURL('**/options.html');
+  await cal.click('#tabs a:text-is("Tickets")');
+  await cal.waitForURL('**/tickets.html');
+  if (context.pages().length !== pagesBefore) fail('switching tabs in a page opened a new browser tab');
 
   const badge = await worker.evaluate(() => chrome.action.getBadgeText({}));
   console.log('badge:', badge);

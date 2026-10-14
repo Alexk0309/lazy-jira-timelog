@@ -2,6 +2,7 @@ import { dayStart, formatDuration, localDay, parseDuration } from '../core/time'
 import type { LoggedWork } from '../jira';
 import { call } from '../messages';
 import { el, toast } from './dom';
+import { goTo, mountTabs } from './nav';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const calEl = $('cal');
@@ -26,7 +27,8 @@ $('this-month').addEventListener('click', () => {
   selected = today;
   void showMonth(firstOfMonth(today));
 });
-$('setup-button').addEventListener('click', () => chrome.runtime.openOptionsPage());
+mountTabs('calendar.html');
+$('setup-button').addEventListener('click', () => goTo('options.html'));
 
 void init();
 

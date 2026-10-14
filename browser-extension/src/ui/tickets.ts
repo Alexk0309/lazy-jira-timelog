@@ -2,6 +2,7 @@ import { flattenKeys, groupTickets, type Ticket, type TicketList, type TicketNod
 import type { IssueSummary } from '../jira';
 import { call } from '../messages';
 import { el, toast } from './dom';
+import { goTo, mountTabs } from './nav';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const listEl = $('list');
@@ -13,8 +14,8 @@ const selected = new Set<string>();
 /** Key being dragged, if any. */
 let dragging: string | null = null;
 
-$('settings').addEventListener('click', () => chrome.runtime.openOptionsPage());
-$('setup-button').addEventListener('click', () => chrome.runtime.openOptionsPage());
+mountTabs('tickets.html');
+$('setup-button').addEventListener('click', () => goTo('options.html'));
 $('refresh').addEventListener('click', () => void run(() => call('refreshTickets'), 'Refreshed from Jira'));
 $('fetch-assigned').addEventListener('click', () => void fetchAssigned());
 $('sort').addEventListener('click', () => void run(() => call('sortTickets')));

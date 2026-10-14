@@ -1,6 +1,7 @@
 import { call } from '../messages';
 import type { Settings } from '../storage';
 import { toast } from './dom';
+import { mountTabs } from './nav';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -18,6 +19,8 @@ const cursorResult = $('cursor-result');
 const CURSOR_ORIGIN = 'https://api.cursor.com';
 
 let useToken = false;
+
+mountTabs('options.html');
 
 void init();
 
