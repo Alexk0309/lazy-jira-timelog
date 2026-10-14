@@ -1,3 +1,4 @@
+import { type Estimate, type RawTimeTracking, toEstimate } from './core/estimate';
 import type { TicketDetails } from './core/tickets';
 import { jiraStarted } from './core/time';
 
@@ -40,6 +41,8 @@ export interface LoggedWork {
   started: number;
   seconds: number;
   comment: string;
+  /** The issue's time tracking, when it has an estimate. */
+  estimate?: Estimate;
 }
 
 /** Fields a worklog edit may change. Jira can't move a worklog to another issue. */
@@ -213,15 +216,15 @@ export class JiraClient {
   async myWorklogs(from: number, to: number): Promise<LoggedWork[]> {
     const me = await this.myself();
     const jql = `worklogAuthor = currentUser() AND worklogDate >= "${jqlDay(from - 86_400_000)}" AND worklogDate <= "${jqlDay(to + 86_400_000)}"`;
-    const issues: IssueSummary[] = [];
+    const issues: (IssueSummary & { estimate?: Estimate })[] = [];
     let nextPageToken: string | undefined;
     for (let page = 0; page < 10; page++) {
-      const body = await this.request<{ issues?: { key: string; fields: { summary: string } }[]; nextPageToken?: string; isLast?: boolean }>(
-        'POST',
-        '/rest/api/3/search/jql',
-        { jql, fields: ['summary'], maxResults: 100, ...(nextPageToken ? { nextPageToken } : {}) },
-      );
-      issues.push(...(body.issues ?? []).map((i) => ({ key: i.key, summary: i.fields.summary })));
+      const body = await this.request<{
+        issues?: { key: string; fields: { summary: string; timetracking?: RawTimeTracking } }[];
+        nextPageToken?: string;
+        isLast?: boolean;
+      }>('POST', '/rest/api/3/search/jql', { jql, fields: ['summary', 'timetracking'], maxResults: 100, ...(nextPageToken ? { nextPageToken } : {}) });
+      issues.push(...(body.issues ?? []).map((i) => ({ key: i.key, summary: i.fields.summary, estimate: toEstimate(i.fields.timetracking) })));
       nextPageToken = body.nextPageToken;
       if (!nextPageToken || body.isLast) {
         break;
@@ -232,7 +235,15 @@ export class JiraClient {
       for (const w of await this.worklogs(issue.key, from, to)) {
         const started = parseJiraTime(w.started);
         if (w.authorAccountId === me.accountId && started >= from && started < to) {
-          result.push({ id: w.id, key: issue.key, summary: issue.summary, started, seconds: w.timeSpentSeconds, comment: w.comment });
+          result.push({
+            id: w.id,
+            key: issue.key,
+            summary: issue.summary,
+            started,
+            seconds: w.timeSpentSeconds,
+            comment: w.comment,
+            ...(issue.estimate ? { estimate: issue.estimate } : {}),
+          });
         }
       }
     }
@@ -373,7 +384,7 @@ export class JiraClient {
   }
 }
 
-const TICKET_FIELDS = ['summary', 'status', 'issuetype', 'parent', 'created'];
+const TICKET_FIELDS = ['summary', 'status', 'issuetype', 'parent', 'created', 'timetracking'];
 
 interface RawIssue {
   key: string;
@@ -383,6 +394,7 @@ interface RawIssue {
     issuetype?: { name?: string };
     parent?: { key?: string; fields?: { summary?: string } };
     created?: string;
+    timetracking?: RawTimeTracking;
   };
 }
 
@@ -397,6 +409,8 @@ function toTicket(issue: RawIssue): TicketDetails {
     issueType: f.issuetype?.name ?? '',
     ...(f.parent?.key ? { parentKey: f.parent.key, parentSummary: f.parent.fields?.summary ?? '' } : {}),
     created: Number.isFinite(created) ? created : 0,
+    // Always set, so a refresh clears an estimate that was removed in Jira.
+    estimate: toEstimate(f.timetracking),
   };
 }
 

@@ -236,7 +236,8 @@ describe('Service calendar', () => {
       if (url.endsWith('/myself')) return json({ accountId: 'me', displayName: 'Alex' });
       if (url.endsWith('/search/jql')) {
         expect(JSON.parse(init?.body as string).jql).toMatch(/^worklogAuthor = currentUser\(\) AND worklogDate >= "2026-10-12"/);
-        return json({ issues: [{ key: 'PAY-7', fields: { summary: 'Refunds' } }], isLast: true });
+        expect(JSON.parse(init?.body as string).fields).toEqual(['summary', 'timetracking']);
+        return json({ issues: [{ key: 'PAY-7', fields: { summary: 'Refunds', timetracking: { originalEstimateSeconds: 7200, timeSpentSeconds: 3600 } } }], isLast: true });
       }
       if (url.includes('/issue/PAY-7/worklog')) {
         return json({
@@ -253,7 +254,9 @@ describe('Service calendar', () => {
     await store.saveSettings({ siteUrl: 'https://team.atlassian.net' });
     const service = new Service(store, fetchImpl);
     const logs = await service.logged(day(0), day(0) + 86_400_000);
-    expect(logs).toEqual([{ id: '1', key: 'PAY-7', summary: 'Refunds', started: day(9), seconds: 3600, comment: 'Built refunds' }]);
+    expect(logs).toEqual([
+      { id: '1', key: 'PAY-7', summary: 'Refunds', started: day(9), seconds: 3600, comment: 'Built refunds', estimate: { original: 7200, remaining: 3600, spent: 3600 } },
+    ]);
   });
 
   it('edits and deletes a worklog in Jira', async () => {
@@ -305,6 +308,22 @@ describe('Service tickets', () => {
     expect(result.added.sort()).toEqual(['PAY-1', 'PAY-2']);
     expect(result.list.tickets.find((t) => t.key === 'PAY-2')).toMatchObject({ parentKey: 'PAY-1', parentSummary: 'Epic', status: 'In Progress', statusCategory: 'indeterminate' });
     expect(result.missing).toEqual([]);
+  });
+
+  it('reads titles and estimates for the review, marking unknown keys', async () => {
+    const { service, calls } = await setup((url) => {
+      if (url.endsWith('/search/jql')) return json({ errorMessages: ["An issue with key 'OPS-404' does not exist"] }, 400);
+      if (url.includes('/issue/PAY-7?')) return json(issue('PAY-7', { timetracking: { originalEstimateSeconds: 14400, remainingEstimateSeconds: 10800, timeSpentSeconds: 3600 } }));
+      if (url.includes('/issue/PAY-8?')) return json(issue('PAY-8', { timetracking: {} }));
+      return undefined;
+    });
+    const info = await service.issues(['PAY-7', 'PAY-8', 'OPS-404', 'gh:org/repo#5', '']);
+    expect(info).toEqual({
+      'PAY-7': { summary: 'Summary of PAY-7', estimate: { original: 14400, remaining: 10800, spent: 3600 } },
+      'PAY-8': { summary: 'Summary of PAY-8' },
+      'OPS-404': null,
+    });
+    expect(calls[0].body).toMatchObject({ fields: expect.arrayContaining(['summary', 'timetracking']) });
   });
 
   it('falls back to one lookup per key when a key does not exist', async () => {

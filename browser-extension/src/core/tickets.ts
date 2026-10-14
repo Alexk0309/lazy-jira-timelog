@@ -1,3 +1,4 @@
+import type { Estimate } from './estimate';
 /** What Jira says about a ticket; refreshed from Jira, never edited here. */
 export interface TicketDetails {
   key: string;
@@ -10,6 +11,8 @@ export interface TicketDetails {
   parentSummary?: string;
   /** Epoch ms the issue was created in Jira. */
   created: number;
+  /** The issue's own time tracking, when it has an estimate. */
+  estimate?: Estimate;
 }
 
 /** A ticket on your list. */

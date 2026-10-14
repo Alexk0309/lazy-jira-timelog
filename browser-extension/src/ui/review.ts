@@ -3,10 +3,11 @@ import { isUnassignedKey } from '../classify';
 import { roundToStep } from '../core/drafts';
 import { prioritized, type Ticket } from '../core/tickets';
 import { dayStart, formatDuration, parseDuration } from '../core/time';
+import { type Estimate, estimateProgress } from '../core/estimate';
 import type { Draft } from '../core/types';
 import type { IssueSummary } from '../jira';
 import { call } from '../messages';
-import { el, toast } from './dom';
+import { el, estimateBar, ticketHeading, toast } from './dom';
 import { goTo, mountTabs } from './nav';
 
 interface Row {
@@ -44,6 +45,11 @@ let aiBusyDay: string | null = null;
 /** Day whose "describe your day" box is open, if any. */
 let aiComposerDay: string | null = null;
 const summaries = new Map<string, string | null>();
+/** Time tracking per issue key; a key is present once Jira was asked, even without an estimate. */
+const estimates = new Map<string, Estimate | undefined>();
+/** Keys asked for, or waiting to be asked for, in one batched request. */
+const requested = new Set<string>();
+let waiting: string[] = [];
 /** Your ticket list, flagged first; offered first in the issue picker. */
 let saved: Ticket[] = [];
 
@@ -85,7 +91,6 @@ async function load(): Promise<void> {
       })
       .catch(() => undefined);
     void loadSuggestions();
-    void loadSummaries(rows.map((r) => r.targetKey));
     void loadManualLogs();
   }
   if (aiEnabled) {
@@ -131,16 +136,35 @@ async function loadSuggestions(): Promise<void> {
   }
 }
 
-async function loadSummaries(keys: string[]): Promise<void> {
-  const wanted = keys.filter((k) => k && !summaries.has(k));
-  if (wanted.length === 0) {
+/** Asks Jira for an issue's title and estimate once; rows needing the same key share the answer. */
+function wantInfo(key: string): void {
+  if (!key || requested.has(key)) {
     return;
   }
-  const found = await call('summaries', { keys: wanted }).catch(() => ({}) as Record<string, string | null>);
-  for (const [key, summary] of Object.entries(found)) {
-    summaries.set(key, summary);
+  requested.add(key);
+  waiting.push(key);
+  if (waiting.length === 1) {
+    queueMicrotask(() => void loadInfo());
+  }
+}
+
+async function loadInfo(): Promise<void> {
+  const keys = waiting;
+  waiting = [];
+  const found = await call('issues', { keys }).catch(() => ({}) as Awaited<ReturnType<typeof call<'issues'>>>);
+  for (const [key, info] of Object.entries(found)) {
+    summaries.set(key, info?.summary ?? null);
+    estimates.set(key, info?.estimate);
   }
   updateSubtitles();
+}
+
+/** Logged time changed the estimate in Jira, so read it again. */
+function refreshInfo(keys: string[]): void {
+  for (const key of keys) {
+    requested.delete(key);
+    wantInfo(key);
+  }
 }
 
 async function loadManualLogs(): Promise<void> {
@@ -228,12 +252,7 @@ function renderRow(row: Row): HTMLElement {
   const main = el(
     'button',
     { class: 'row-main', type: 'button', 'aria-expanded': String(row.id === openId) },
-    el(
-      'div',
-      { class: 'row-text' },
-      el('div', { class: `row-key${row.targetKey ? '' : ' unassigned'}` }, row.targetKey || 'Unassigned'),
-      el('div', { class: 'row-sub' }, subtitle(row)),
-    ),
+    rowText(row),
     el('span', { class: 'row-time' }, row.done ? 'Logged' : row.duration || 'Add'),
     chevron(),
   );
@@ -322,7 +341,6 @@ function renderEditor(row: Row): HTMLElement {
     results.hidden = true;
     issue.value = row.targetKey;
     updateHeader(row);
-    void loadSummaries([row.targetKey]);
   });
 
   // Duration stepper
@@ -376,10 +394,7 @@ function updateHeader(row: Row): void {
   if (!node) {
     return;
   }
-  const key = node.querySelector('.row-key')!;
-  key.textContent = row.targetKey || 'Unassigned';
-  key.classList.toggle('unassigned', !row.targetKey);
-  node.querySelector('.row-sub')!.textContent = subtitle(row);
+  node.querySelector('.row-main .row-text')!.replaceWith(rowText(row));
   node.querySelector('.row-time')!.textContent = row.duration || 'Add';
   renderTotals();
 }
@@ -391,27 +406,34 @@ function updateRow(row: Row): void {
 
 function updateSubtitles(): void {
   for (const row of rows) {
-    const sub = document.querySelector(`.row[data-id="${row.id}"] .row-sub`);
-    if (sub) {
-      sub.textContent = subtitle(row);
-    }
+    document.querySelector(`.row[data-id="${row.id}"] .row-main .row-text`)?.replaceWith(rowText(row));
   }
 }
 
+/** Key and Jira title, what the time was for, and the estimate bar with this entry's time added. */
+function rowText(row: Row): HTMLElement {
+  const key = row.targetKey;
+  wantInfo(key);
+  const pending = row.done ? 0 : (parseDuration(row.duration) ?? 0);
+  return el(
+    'div',
+    { class: 'row-text' },
+    key ? ticketHeading(key, summaries.get(key)) : ticketHeading('Unassigned', null, 'unassigned'),
+    el('div', { class: 'row-sub' }, subtitle(row)),
+    key ? estimateBar(estimateProgress(estimates.get(key), pending), key) : '',
+  );
+}
+
 function subtitle(row: Row): string {
-  if (row.kind === 'added') {
-    // What you described is the point of an added row; the issue name is in the editor.
-    return row.comment.split('\n')[0] || summaries.get(row.targetKey) || '';
-  }
   if (!row.targetKey) {
     // For an unassigned PR the comment is its title, which says what the time was.
     return (isUnassignedKey(row.sourceKey) && row.comment.split('\n')[0]) || 'Choose the issue this time belongs to';
   }
-  const summary = summaries.get(row.targetKey);
-  if (summary === null) {
+  if (summaries.get(row.targetKey) === null) {
     return `${row.targetKey} wasn't found in Jira`;
   }
-  return summary ?? row.comment.split('\n')[0];
+  // The title sits beside the key, so this line says what the time was for.
+  return row.comment.split('\n')[0];
 }
 
 /** Cursor's question, with your tickets as one-click answers. */
@@ -500,6 +522,7 @@ async function logRows(targets: Row[]): Promise<void> {
     }
   }
   render();
+  refreshInfo([...new Set(rows.filter((r) => r.done && r.targetKey).map((r) => r.targetKey))]);
   if (logged > 0) {
     toast(`Logged ${logged} ${logged === 1 ? 'entry' : 'entries'} to Jira`);
   }

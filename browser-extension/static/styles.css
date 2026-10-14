@@ -273,6 +273,67 @@ body.popup .tabbar {
   font-size: 15px;
 }
 
+/* Key and title on one line in the review and calendar. */
+div.row-key {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+/* The Jira title beside the key: read-only, one line. */
+.row-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+/* Logged time against the ticket's estimate. */
+.estimate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.estimate-track {
+  display: flex;
+  flex: 1;
+  max-width: 220px;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--field);
+}
+
+.estimate-logged {
+  background: var(--blue);
+}
+
+.estimate-adding {
+  background: var(--blue);
+  opacity: 0.4;
+}
+
+.estimate.over .estimate-logged,
+.estimate.over .estimate-adding {
+  background: var(--red);
+}
+
+.estimate-label {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.estimate.over .estimate-label {
+  color: var(--red);
+}
+
 .row-key.unassigned {
   color: var(--orange);
 }

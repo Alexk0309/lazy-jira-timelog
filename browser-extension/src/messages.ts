@@ -1,7 +1,7 @@
 import type { AiResult } from './ai';
 import type { TicketList } from './core/tickets';
 import type { IssueSummary, LoggedWork } from './jira';
-import type { PostInput, ReviewState, WorklogEdit } from './service';
+import type { IssueInfo, PostInput, ReviewState, WorklogEdit } from './service';
 import type { AiState, Settings } from './storage';
 import type { Tracking } from './tracker';
 
@@ -12,6 +12,7 @@ export interface Api {
   discard: { req: { day: string; sourceKey: string; rawMs: number }; res: void };
   search: { req: { query: string }; res: IssueSummary[] };
   summaries: { req: { keys: string[] }; res: Record<string, string | null> };
+  issues: { req: { keys: string[] }; res: Record<string, IssueInfo | null> };
   manualLogs: { req: { items: { key: string; day: string }[] }; res: Record<string, number> };
   suggestions: { req: void; res: IssueSummary[] };
   getSettings: { req: void; res: Settings };
