@@ -13,8 +13,12 @@ export type View = (typeof VIEWS)[number]['page'];
 /** True inside the toolbar popup, which stays a popup as you switch views. */
 export const isPopup = new URLSearchParams(location.search).has('popup');
 
-function viewUrl(page: View): string {
-  return isPopup ? `${page}?popup=1` : page;
+function viewUrl(page: View, params: Record<string, string> = {}): string {
+  const query = new URLSearchParams(params);
+  if (isPopup) {
+    query.set('popup', '1');
+  }
+  return query.size > 0 ? `${page}?${query}` : page;
 }
 
 /**
@@ -25,14 +29,23 @@ function opensInTab(page: View): boolean {
   return isPopup && page === 'options.html';
 }
 
-/** Switches to another view in this same popup or tab. */
-export function goTo(page: View): void {
+/** Switches to another view in this same popup or tab, e.g. the review on a given `day`. */
+export function goTo(page: View, params: Record<string, string> = {}): void {
   if (opensInTab(page)) {
     void chrome.runtime.openOptionsPage();
     window.close();
     return;
   }
-  location.href = viewUrl(page);
+  location.href = viewUrl(page, params);
+}
+
+/** Rewrites this page's query, e.g. the day on show, so a reload or "Open in a tab" keeps it. */
+export function setParams(params: Record<string, string>): void {
+  history.replaceState(null, '', viewUrl(currentPage(), params));
+}
+
+function currentPage(): View {
+  return location.pathname.split('/').pop() as View;
 }
 
 /** Fills the page's tab bar and, in the popup, adds a button to open the current view in a tab. */
@@ -68,7 +81,10 @@ export function mountTabs(current: View): void {
     expand.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M10 14 20 4M20 14v6H4V4h6"/></svg>';
     expand.addEventListener('click', () => {
-      void chrome.tabs.create({ url: chrome.runtime.getURL(current) });
+      // Keeps the view's own query (e.g. the day on show), without the popup flag.
+      const query = new URLSearchParams(location.search);
+      query.delete('popup');
+      void chrome.tabs.create({ url: chrome.runtime.getURL(query.size > 0 ? `${current}?${query}` : current) });
       window.close();
     });
     bar.append(expand);

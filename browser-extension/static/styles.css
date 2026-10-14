@@ -1199,3 +1199,79 @@ a.btn {
   color: var(--orange);
   font-size: 11px;
 }
+
+/* Day switcher on the review */
+.week {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
+.week .cal-day {
+  min-height: 0;
+  padding: 4px 2px 9px;
+}
+
+.week .cal-day:disabled {
+  cursor: default;
+  background: transparent;
+}
+
+.week-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Time tracked on this day that isn't in Jira yet. */
+.cal-day.pending::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: calc(50% - 22px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--orange);
+}
+
+.other-days {
+  margin-top: 8px;
+}
+
+.other-days .btn-link {
+  font-weight: 500;
+}
+
+.date-pick {
+  position: relative;
+  display: inline-flex;
+}
+
+/* The native date picker opens from here; the input itself stays out of sight. */
+.date-pick input {
+  position: absolute;
+  inset: auto 0 0 auto;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  padding: 0;
+}
+
+.icon-button:disabled {
+  color: var(--text-3);
+  background: transparent;
+  cursor: default;
+}
+
+.top .icon-buttons {
+  align-items: center;
+}
