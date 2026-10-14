@@ -950,6 +950,49 @@ a.btn {
   fill: currentColor;
 }
 
+.ticket .flag-space {
+  flex: 0 0 30px;
+}
+
+.ticket.parent {
+  background: var(--surface-2);
+}
+
+.ticket.parent .row-key {
+  font-weight: 600;
+}
+
+.ticket .toggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 4px 6px 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--field);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ticket .toggle:hover {
+  color: var(--blue);
+}
+
+.ticket .toggle svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.15s;
+}
+
+.ticket .toggle[aria-expanded='false'] svg {
+  transform: rotate(-90deg);
+}
+
 .ticket-head {
   display: flex;
   align-items: center;
