@@ -14,6 +14,8 @@ A browser extension for Google Chrome and Microsoft Edge that notices the time y
 - **Suggests what it couldn't see.** Issues you moved, or that are assigned to you and changed today, appear under "Touched in Jira today", so meetings and offline work are easy to add.
 - **One-click review.** The toolbar popup shows today's total and one row per issue, rounded to 15 minutes. Tap a row to change the issue, adjust time with the − / + stepper, edit the comment (PR titles are filled in for you), split or discard. Then press **Log**.
 - **Fill in with AI (optional).** Add a Cursor API key in Settings and each day on the review screen gets a **Fill in with AI** button. Cursor writes a one-line comment for every entry and matches unassigned time to one of the open issues assigned to you, with a short reason. Matches are checked in code against your assigned issues, and nothing is logged until you press **Log**.
+- **Describe your day (optional, with AI).** Press **Fill in with AI** and, if you like, write a line about your day, such as "standup 15m, 1h pairing on PAY-12, sprint planning". Cursor uses the times you mention and adds entries for meetings and other work nothing tracked. Issues come only from those assigned to you or the ones you name yourself; anything else is left for you to pick.
+- **Calendar of past worklogs.** The calendar button opens a month view of what you've logged in Jira, with hours per day. Pick a day to change a worklog's start time, duration or comment, or delete it.
 - **One reminder.** The badge shows unlogged time, and a single notification at 17:30 nudges you, only if something is unlogged.
 
 ## Install (pilot)
@@ -35,6 +37,8 @@ For a team rollout, publish the same zip as an unlisted item on the Chrome Web S
 2. Paste it under **AI with Cursor** in Settings. The browser asks once to allow `api.cursor.com`. Click **Test key**, and optionally pick a model.
 3. On the review screen, press **Fill in with AI** next to a day.
 
+Before pressing **Fill in**, you can describe the day in the box that opens. Without a description Cursor only writes comments and matches unassigned time. With one, it also sets the time for tracked entries you give a time for and adds new entries for work the browser couldn't see, each marked "Added from your summary". An issue key you type, such as `PAY-12`, may be used even if it isn't assigned to you; every other match is checked against your open assigned issues. The text you type is kept on this computer until you send it, and is sent to Cursor only when you press **Fill in**.
+
 How it works: the extension calls Cursor's Cloud Agents API directly. The Cursor SDK wraps the same API but needs Node, so it can't run in a browser. Each press starts one short agent with no repository, sends it that day's issue titles, PR titles and times plus your open assigned issues, reads its JSON answer and deletes the agent. Runs are billed to your Cursor plan. If Cursor answers 403, a team admin needs to allow agents without a repository. The API is in beta, and a run typically takes a little while, so the popup can be closed and reopened; the result is waiting when it's done.
 
 ## Development
@@ -53,7 +57,7 @@ npm run package # typecheck, test, production build, zip
 - `src/classify.ts` decides which Jira issue, if any, a tab is about.
 - `src/tracker.ts` turns browser state into heartbeats; `src/background.ts` wires it to Chrome events and a 30-second alarm.
 - `src/service.ts` and `src/jira.ts` cover drafts, posting worklogs, issue search and "touched today" suggestions.
-- `src/ui/` and `static/` contain the popup/review page and Settings.
+- `src/ui/` and `static/` contain the popup/review page, the calendar and Settings.
 
 ## Known limits
 

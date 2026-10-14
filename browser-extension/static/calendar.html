@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timelog calendar</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page">
+    <header class="top">
+      <div>
+        <p class="eyebrow" id="month-label">Logged in Jira</p>
+        <h1 class="hero" id="month-total">&nbsp;</h1>
+      </div>
+      <div class="icon-buttons">
+        <button class="icon-button" id="prev" title="Previous month" aria-label="Previous month">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>
+        </button>
+        <button class="btn btn-plain" id="this-month">Today</button>
+        <button class="icon-button" id="next" title="Next month" aria-label="Next month">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div id="setup" class="card" hidden>
+      <h2>Couldn't load your worklogs</h2>
+      <p id="setup-text"></p>
+      <div><button class="btn btn-primary" id="setup-button">Open Settings</button></div>
+    </div>
+
+    <div class="cal" id="cal" role="grid" aria-label="Month"></div>
+
+    <h2 class="section-title" id="day-title"></h2>
+    <main id="day"></main>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+  <script type="module" src="calendar.js"></script>
+</body>
+</html>

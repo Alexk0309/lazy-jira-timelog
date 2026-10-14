@@ -1,12 +1,12 @@
-import { buildPrompt, parseSuggestions, type AiInput, type AiSuggestion } from './ai';
+import { buildPrompt, parseSuggestions, type AiInput, type AiResult } from './ai';
 import { buildDrafts, totalUnloggedMs } from './core/drafts';
 import { shouldRemind } from './core/reminder';
 import { buildSessions } from './core/sessions';
 import { dayEnd, dayStart, localDay, parseClock, parseDuration } from './core/time';
 import type { Draft } from './core/types';
-import { extractIssueKey } from './core/issueKey';
+import { extractIssueKey, extractIssueKeys } from './core/issueKey';
 import { CURSOR_API, CursorClient } from './cursor';
-import { JiraClient, type IssueSummary } from './jira';
+import { JiraClient, type IssueSummary, type LoggedWork } from './jira';
 import type { AiState, Settings, Store } from './storage';
 
 /** How far back the review shows unlogged days. */
@@ -22,6 +22,15 @@ export interface PostInput {
   targetKey: string;
   duration: string;
   started: number;
+  comment: string;
+}
+
+export interface WorklogEdit {
+  key: string;
+  id: string;
+  /** Epoch ms. */
+  started: number;
+  duration: string;
   comment: string;
 }
 
@@ -159,28 +168,36 @@ export class Service {
 
   /**
    * Asks Cursor to write a comment for each of the day's entries and to match
-   * unassigned time to one of your open, assigned issues. Nothing is logged.
+   * unassigned time to one of your open, assigned issues. With a summary of
+   * the day it also adjusts times you mention and proposes entries for work
+   * nothing tracked. Nothing is logged.
    */
-  async aiSuggest(day: string, keepAlive?: () => unknown): Promise<AiSuggestion[]> {
+  async aiSuggest(day: string, summary = '', keepAlive?: () => unknown): Promise<AiResult> {
     const running = await this.store.aiState();
     if (running?.status === 'running' && this.now() - running.at < AI_RUN_TIMEOUT_MS) {
       throw new Error('Cursor is still working on the last request.');
     }
+    summary = summary.trim();
     const { client, model } = await this.cursor();
     const drafts = (await this.drafts()).filter((d) => d.day === day);
-    if (drafts.length === 0) {
-      throw new Error('There is nothing to fill in for this day.');
+    if (drafts.length === 0 && !summary) {
+      throw new Error('There is nothing to fill in for this day. Describe your day to add entries.');
     }
     const jira = await this.requireClient();
     await this.store.setAiState({ day, status: 'running', at: this.now() });
     try {
       const assigned = await jira.assignedToMe();
       const keys = drafts.map((d) => issueKeyOf(d.sourceKey)).filter((k): k is string => !!k);
-      const summaries = await this.issueSummaries(keys);
+      // Keys you typed yourself may be used even when they aren't assigned to you, if they exist.
+      const typed = extractIssueKeys(summary, await this.store.projectKeys()).filter((k) => !assigned.some((a) => a.key === k));
+      const summaries = await this.issueSummaries([...keys, ...typed]);
+      const mentioned = typed.filter((k) => summaries[k]).map((k) => ({ key: k, summary: summaries[k] as string }));
       const notes = (await this.store.notes()).filter((n) => localDay(n.t) === day);
       const input: AiInput = {
         day,
         assigned,
+        summary,
+        mentioned,
         rows: drafts.map((d) => {
           const key = issueKeyOf(d.sourceKey);
           const seen = [...new Set(notes.filter((n) => n.branch === d.sourceKey).map((n) => n.subject))];
@@ -194,13 +211,52 @@ export class Service {
         }),
       };
       const reply = await client.ask(buildPrompt(input), { model, onPoll: keepAlive });
-      const suggestions = parseSuggestions(reply, input);
-      await this.store.setAiState({ day, status: 'done', at: this.now(), suggestions });
-      return suggestions;
+      const result = parseSuggestions(reply, input);
+      await this.store.setAiState({ day, status: 'done', at: this.now(), suggestions: result.rows, added: result.added });
+      return result;
     } catch (err) {
       await this.store.setAiState({ day, status: 'error', at: this.now(), error: (err as Error).message });
       throw err;
     }
+  }
+
+  /** Marks one AI-added entry as logged or removed so reopening the popup doesn't bring it back. */
+  async consumeAiEntry(at: number, index: number): Promise<void> {
+    const state = await this.store.aiState();
+    if (state?.at === at && !state.consumed?.includes(index)) {
+      await this.store.setAiState({ ...state, consumed: [...(state.consumed ?? []), index] });
+    }
+  }
+
+  /** Your worklogs that started within [from, to), for the calendar. */
+  async logged(from: number, to: number): Promise<LoggedWork[]> {
+    const client = await this.requireClient();
+    const logs = await client.myWorklogs(from, to);
+    for (const log of logs) {
+      this.summaries.set(log.key, log.summary);
+    }
+    return logs;
+  }
+
+  async editWorklog(edit: WorklogEdit): Promise<void> {
+    const seconds = parseDuration(edit.duration);
+    if (seconds === null || seconds < 60) {
+      throw new Error('Enter a duration like 1h 30m.');
+    }
+    if (!Number.isFinite(edit.started)) {
+      throw new Error('Enter a start time.');
+    }
+    const client = await this.requireClient();
+    await client.updateWorklog(edit.key, edit.id, { started: edit.started, seconds, comment: edit.comment });
+  }
+
+  /**
+   * Deletes a worklog in Jira. Time this tool posted stays settled, so it
+   * doesn't come back as something to log.
+   */
+  async deleteWorklog(key: string, id: string): Promise<void> {
+    const client = await this.requireClient();
+    await client.deleteWorklog(key, id);
   }
 
   async search(query: string): Promise<IssueSummary[]> {

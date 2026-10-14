@@ -1,6 +1,6 @@
-import type { AiSuggestion } from './ai';
-import type { IssueSummary } from './jira';
-import type { PostInput, ReviewState } from './service';
+import type { AiResult } from './ai';
+import type { IssueSummary, LoggedWork } from './jira';
+import type { PostInput, ReviewState, WorklogEdit } from './service';
 import type { AiState, Settings } from './storage';
 import type { Tracking } from './tracker';
 
@@ -17,8 +17,12 @@ export interface Api {
   saveSettings: { req: Partial<Settings>; res: Settings };
   connect: { req: void; res: string };
   testCursor: { req: void; res: { message: string; models: { id: string; displayName: string }[] } };
-  aiSuggest: { req: { day: string }; res: AiSuggestion[] };
+  aiSuggest: { req: { day: string; summary?: string }; res: AiResult };
   aiState: { req: void; res: AiState | undefined };
+  consumeAiEntry: { req: { at: number; index: number }; res: void };
+  logged: { req: { from: number; to: number }; res: LoggedWork[] };
+  editWorklog: { req: WorklogEdit; res: void };
+  deleteWorklog: { req: { key: string; id: string }; res: void };
 }
 
 export type Request = { [K in keyof Api]: { type: K; payload: Api[K]['req'] } }[keyof Api];
