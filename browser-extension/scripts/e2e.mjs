@@ -279,8 +279,14 @@ try {
   await tickets.waitForSelector('.ticket.parent');
   if ((await tickets.$('.ticket[data-key="PAY-11"]')) || (await tickets.getAttribute('.ticket[data-key="PAY-10"] .toggle', 'aria-expanded')) !== 'false') fail('collapsed group did not stay collapsed');
   if (shots) await tickets.screenshot({ path: join(shots, 'tickets-collapsed.png'), fullPage: true });
-  await tickets.click('.ticket[data-key="PAY-10"] .toggle');
-  await tickets.waitForSelector('.ticket[data-key="PAY-11"]');
+  await tickets.click('#collapse-all');
+  await tickets.waitForFunction(() => document.querySelectorAll('.ticket').length === 4);
+  if ((await shown()) !== 'PAY-10 PAY-7 PAY-8 OPS-12') fail('collapse all left sub-tickets showing');
+  if (!(await tickets.isDisabled('#collapse-all'))) fail('collapse all still enabled with everything collapsed');
+  await tickets.click('#expand-all');
+  await tickets.waitForSelector('.ticket[data-key="OPS-13"]');
+  if (!(await shown()).startsWith('PAY-10 PAY-12(sub) PAY-11(sub) ') || !(await tickets.isDisabled('#expand-all'))) fail('expand all did not open every group');
+  console.log('collapse all and expand all: ok');
   if (shots) await tickets.screenshot({ path: join(shots, 'tickets.png'), fullPage: true });
   if (shots) {
     await tickets.emulateMedia({ colorScheme: 'dark' });

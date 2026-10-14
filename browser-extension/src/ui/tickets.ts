@@ -22,6 +22,8 @@ $('setup-button').addEventListener('click', () => goTo('options.html'));
 $('refresh').addEventListener('click', () => void run(() => call('refreshTickets'), 'Refreshed from Jira'));
 $('fetch-assigned').addEventListener('click', () => void fetchAssigned());
 $('sort').addEventListener('click', () => void run(() => call('sortTickets')));
+$('expand-all').addEventListener('click', () => setAllCollapsed(false));
+$('collapse-all').addEventListener('click', () => setAllCollapsed(true));
 $('paste-toggle').addEventListener('click', () => togglePaste(true));
 $('paste-cancel').addEventListener('click', () => togglePaste(false));
 $('paste-add').addEventListener('click', () => void addFromText($<HTMLTextAreaElement>('paste-text').value, true));
@@ -203,6 +205,13 @@ function render(): void {
   }
 
   $('sort').hidden = !list.manualOrder;
+  const parents = parentKeys(tree);
+  const shut = parents.filter((k) => collapsed.has(k)).length;
+  for (const id of ['expand-all', 'collapse-all']) {
+    $(id).hidden = parents.length === 0;
+  }
+  $<HTMLButtonElement>('expand-all').disabled = shut === 0;
+  $<HTMLButtonElement>('collapse-all').disabled = shut === parents.length;
   $('list-title').textContent = list.manualOrder ? 'Your order' : 'Newest first';
   $('selection').hidden = selected.size === 0;
   $('selection-count').textContent = `${selected.size} selected`;
@@ -270,6 +279,23 @@ function renderParent(node: TicketNode, depth: number): HTMLElement {
   );
   makeDraggable(row, t.key);
   return row;
+}
+
+/** Keys of every ticket or parent heading that has sub-tickets, at any depth. */
+function parentKeys(nodes: TicketNode[]): string[] {
+  return nodes.flatMap((n) => (n.children.length > 0 ? [n.ticket.key, ...parentKeys(n.children)] : []));
+}
+
+function setAllCollapsed(shut: boolean): void {
+  for (const key of parentKeys(tree)) {
+    if (shut) {
+      collapsed.add(key);
+    } else {
+      collapsed.delete(key);
+    }
+  }
+  saveCollapsed();
+  render();
 }
 
 /** Shows or hides a parent's sub-tickets. */
