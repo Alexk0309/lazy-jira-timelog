@@ -1,4 +1,5 @@
 import type { AiResult } from './ai';
+import type { TicketList } from './core/tickets';
 import type { IssueSummary, LoggedWork } from './jira';
 import type { PostInput, ReviewState, WorklogEdit } from './service';
 import type { AiState, Settings } from './storage';
@@ -20,6 +21,15 @@ export interface Api {
   aiSuggest: { req: { day: string; summary?: string }; res: AiResult };
   aiState: { req: void; res: AiState | undefined };
   consumeAiEntry: { req: { at: number; index: number }; res: void };
+  answerAiQuestion: { req: { at: number; index: number; key: string }; res: void };
+  tickets: { req: void; res: TicketList };
+  addTickets: { req: { text: string }; res: { list: TicketList; added: string[]; missing: string[] } };
+  addAssigned: { req: void; res: { list: TicketList; added: string[] } };
+  refreshTickets: { req: void; res: TicketList };
+  flagTickets: { req: { keys: string[]; flagged: boolean }; res: TicketList };
+  removeTickets: { req: { keys: string[] }; res: TicketList };
+  reorderTickets: { req: { keys: string[] }; res: TicketList };
+  sortTickets: { req: void; res: TicketList };
   logged: { req: { from: number; to: number }; res: LoggedWork[] };
   editWorklog: { req: WorklogEdit; res: void };
   deleteWorklog: { req: { key: string; id: string }; res: void };

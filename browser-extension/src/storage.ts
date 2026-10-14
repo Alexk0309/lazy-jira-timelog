@@ -1,4 +1,5 @@
-import type { AiNewEntry, AiSuggestion } from './ai';
+import type { AiNewEntry, AiQuestion, AiSuggestion } from './ai';
+import { EMPTY_LIST, type TicketList } from './core/tickets';
 import { localDay } from './core/time';
 import type { CommitRecord, Heartbeat, SettledEntry } from './core/types';
 
@@ -45,6 +46,10 @@ export interface AiState {
   added?: AiNewEntry[];
   /** Indexes into `added` already logged or removed, so they don't come back. */
   consumed?: number[];
+  /** Where Cursor wasn't sure which issue to use and asks you. */
+  questions?: AiQuestion[];
+  /** Your answers by question index: the issue key you picked, or "" for none. */
+  answers?: Record<number, string>;
   error?: string;
 }
 
@@ -172,6 +177,20 @@ export class Store {
 
   async setAiState(state: AiState): Promise<void> {
     await this.kv.set({ ai: state });
+  }
+
+  async tickets(): Promise<TicketList> {
+    const { tickets } = await this.kv.get('tickets');
+    return (tickets as TicketList | undefined) ?? EMPTY_LIST;
+  }
+
+  /** Read-modify-write of your ticket list, queued like every other write. */
+  updateTickets(change: (list: TicketList) => TicketList | Promise<TicketList>): Promise<TicketList> {
+    return this.serial(async () => {
+      const next = await change(await this.tickets());
+      await this.kv.set({ tickets: next });
+      return next;
+    });
   }
 
   async lastRemindedDay(): Promise<string | undefined> {

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Timelog tickets</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page">
+    <header class="top">
+      <div>
+        <p class="eyebrow">Your tickets</p>
+        <h1 class="hero" id="count">&nbsp;</h1>
+      </div>
+      <div class="icon-buttons">
+        <button class="icon-button" id="refresh" title="Refresh from Jira" aria-label="Refresh from Jira">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+        </button>
+        <button class="icon-button" id="settings" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div id="setup" class="card" hidden>
+      <h2>Couldn't reach Jira</h2>
+      <p id="setup-text"></p>
+      <div><button class="btn btn-primary" id="setup-button">Open Settings</button></div>
+    </div>
+
+    <div class="card ticket-add">
+      <div class="search">
+        <input type="text" id="search" placeholder="Search Jira to add a ticket" aria-label="Search Jira to add a ticket" autocomplete="off">
+        <ul class="results" id="results" hidden></ul>
+      </div>
+      <div class="actions">
+        <button class="btn btn-tinted" id="fetch-assigned" type="button">Fetch my assigned tickets</button>
+        <button class="btn btn-plain" id="paste-toggle" type="button" aria-expanded="false">Paste keys</button>
+      </div>
+      <div id="paste" class="paste" hidden>
+        <textarea id="paste-text" rows="3" aria-label="Ticket keys to add" placeholder="Paste keys or links, e.g. PAY-12 PAY-14 OPS-3"></textarea>
+        <div class="actions">
+          <span class="spacer"></span>
+          <button class="btn btn-plain" id="paste-cancel" type="button">Cancel</button>
+          <button class="btn btn-primary" id="paste-add" type="button">Add</button>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="section-title"><span id="list-title">List</span><button class="btn-link" id="sort" type="button" hidden>Sort by created date</button></h2>
+    <div class="selection" id="selection" hidden>
+      <span id="selection-count"></span>
+      <span class="spacer"></span>
+      <button class="btn btn-plain" id="sel-flag" type="button">Flag</button>
+      <button class="btn btn-plain" id="sel-unflag" type="button">Unflag</button>
+      <button class="btn btn-danger" id="sel-remove" type="button">Remove</button>
+      <button class="btn btn-plain" id="sel-clear" type="button">Clear</button>
+    </div>
+    <main id="list"></main>
+    <p class="footnote" id="list-hint"></p>
+    <div class="list-footer"><button class="btn btn-plain" id="remove-done" type="button" hidden></button></div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+  <script type="module" src="tickets.js"></script>
+</body>
+</html>

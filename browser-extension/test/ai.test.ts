@@ -100,11 +100,100 @@ describe('day summary', () => {
 
   it('ignores times and new entries when there is no summary', () => {
     const reply = '{"rows":[{"id":"PAY-7","comment":"Refunds.","minutes":300}],"added":[{"minutes":60,"comment":"Meeting."}]}';
-    expect(parseSuggestions(reply, input)).toEqual({ rows: [{ id: 'PAY-7', comment: 'Refunds.' }], added: [] });
+    expect(parseSuggestions(reply, input)).toEqual({ rows: [{ id: 'PAY-7', comment: 'Refunds.' }], added: [], questions: [] });
   });
 
   it('accepts an answer with only new entries', () => {
     const reply = '{"added":[{"minutes":45,"comment":"Sprint planning."}]}';
     expect(parseSuggestions(reply, { ...withSummary, rows: [] }).added).toEqual([{ minutes: 45, comment: 'Sprint planning.' }]);
+  });
+});
+
+describe('your ticket list', () => {
+  const withSaved: AiInput = {
+    ...input,
+    saved: [
+      { key: 'OPS-12', summary: 'Payout CSV for ops', flagged: true, parent: 'Finance tooling' },
+      { key: 'OPS-13', summary: 'CSV encoding bug', flagged: false },
+    ],
+  };
+
+  it('sends saved tickets first, with flags, and tells Cursor to prefer them', () => {
+    const prompt = buildPrompt(withSaved);
+    expect(prompt).toContain('"savedIssues"');
+    expect(prompt).toContain('"flagged": true');
+    expect(prompt).toContain('"parent": "Finance tooling"');
+    expect(prompt).toMatch(/prefer savedIssues: flagged ones first/);
+    expect(prompt).toMatch(/Only use a key that appears in savedIssues or assignedIssues/);
+    expect(prompt.indexOf('savedIssues"')).toBeLessThan(prompt.indexOf('assignedIssues"'));
+    expect(buildPrompt(input)).not.toContain('savedIssues');
+  });
+
+  it('lets a saved ticket match even when it is not assigned to you', () => {
+    const reply = '{"rows":[{"id":"~abc","key":"ops-12","reason":"payout CSV"}]}';
+    expect(parseSuggestions(reply, withSaved).rows[0]).toMatchObject({ key: 'OPS-12', summary: 'Payout CSV for ops' });
+  });
+});
+
+describe('questions', () => {
+  const withSaved: AiInput = {
+    ...input,
+    summary: 'Interview 30m, then fixed CSV stuff.',
+    saved: [
+      { key: 'OPS-12', summary: 'Payout CSV for ops', flagged: true },
+      { key: 'OPS-13', summary: 'CSV encoding bug', flagged: false },
+    ],
+  };
+
+  it('asks about unassigned rows and added entries, with options from allowed issues only', () => {
+    const reply = JSON.stringify({
+      rows: [{ id: '~abc', comment: 'Fixed the export.', key: 'OPS-12' }],
+      added: [
+        { minutes: 0, comment: 'dropped' },
+        { minutes: 30, comment: 'Interviewed a candidate.' },
+      ],
+      questions: [
+        { for: '~abc', question: 'Which ticket was the CSV export for?', options: [{ key: 'OPS-12', why: 'flagged CSV work' }, { key: 'ops-13' }, { key: 'HR-1' }] },
+        { for: 'added:1', question: 'Where should the interview go?', options: ['PAY-8', 'OPS-12'] },
+      ],
+    });
+    const { rows, questions } = parseSuggestions(reply, withSaved);
+    expect(rows[0].key).toBe('OPS-12');
+    expect(questions).toEqual([
+      {
+        target: '~abc',
+        question: 'Which ticket was the CSV export for?',
+        options: [
+          { key: 'OPS-12', summary: 'Payout CSV for ops', why: 'flagged CSV work' },
+          { key: 'OPS-13', summary: 'CSV encoding bug' },
+        ],
+      },
+      // Cursor's added entry 1 is our entry 0, since its entry 0 was dropped.
+      {
+        target: 'added:0',
+        question: 'Where should the interview go?',
+        options: [
+          { key: 'PAY-8', summary: 'Payout reports for finance' },
+          { key: 'OPS-12', summary: 'Payout CSV for ops' },
+        ],
+      },
+    ]);
+  });
+
+  it('drops questions about rows that already have an issue, unknown targets, repeats and single options', () => {
+    const reply = JSON.stringify({
+      rows: [],
+      questions: [
+        { for: 'PAY-7', question: 'Really PAY-7?', options: ['PAY-7', 'PAY-8'] },
+        { for: 'added:5', question: 'Missing entry?', options: ['PAY-7', 'PAY-8'] },
+        { for: '~abc', question: 'Only one?', options: ['OPS-12', 'HR-1'] },
+        { for: '~abc', question: 'Which one?', options: ['OPS-12', 'OPS-13', 'PAY-8', 'PAY-7', 'OPS-12'] },
+        { for: '~abc', question: 'Asked twice?', options: ['OPS-12', 'OPS-13'] },
+      ],
+    });
+    const { questions } = parseSuggestions(reply, withSaved);
+    expect(questions.map((q) => [q.target, q.question, q.options.map((o) => o.key)])).toEqual([
+      ['~abc', 'Which one?', ['OPS-12', 'OPS-13', 'PAY-8', 'PAY-7']],
+    ]);
   });
 });

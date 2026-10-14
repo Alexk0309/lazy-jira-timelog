@@ -12,6 +12,28 @@ const posted = [];
 const cursorCalls = [];
 const edits = [];
 
+// Issues the fake Jira knows, with what the ticket list shows. PAY-9 and OPS-13 are sub-tasks.
+const issues = {
+  'PAY-7': { summary: 'Refund flow for card payments', created: '2026-09-01T09:00:00.000+0000' },
+  'PAY-8': { summary: 'Payout reports for finance', created: '2026-09-05T09:00:00.000+0000' },
+  'PAY-9': { summary: 'Payout CSV export for finance', created: '2026-09-10T09:00:00.000+0000', parent: 'PAY-8', type: 'Sub-task' },
+  'OPS-12': { summary: 'Rotate staging credentials', created: '2026-09-20T09:00:00.000+0000' },
+  'OPS-13': { summary: 'Rotate the payout service key', created: '2026-09-25T09:00:00.000+0000', parent: 'OPS-12', type: 'Sub-task' },
+};
+const issueJson = (key) => {
+  const i = issues[key];
+  return {
+    key,
+    fields: {
+      summary: i.summary,
+      status: { name: 'In Progress', statusCategory: { key: 'indeterminate' } },
+      issuetype: { name: i.type ?? 'Story' },
+      created: i.created,
+      ...(i.parent ? { parent: { key: i.parent, fields: { summary: issues[i.parent].summary } } } : {}),
+    },
+  };
+};
+
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const send = (body, status = 200) => {
@@ -43,7 +65,12 @@ const server = createServer((req, res) => {
             { key: 'HR-1', minutes: 30, comment: 'Interviewed a backend candidate.' },
           ]
         : undefined;
-      return send({ id: 'run-1', status: 'FINISHED', result: '```json\n' + JSON.stringify({ rows, added }) + '\n```' });
+      // Unsure where the interview goes, so it asks, offering tickets from your list (and one that isn't allowed).
+      const questions =
+        data.personSummary && data.savedIssues
+          ? [{ for: 'added:1', question: 'Which ticket should the 30m interview go to?', options: [{ key: 'OPS-12', why: 'flagged on your list' }, { key: 'OPS-13' }, { key: 'HR-1' }] }]
+          : undefined;
+      return send({ id: 'run-1', status: 'FINISHED', result: '```json\n' + JSON.stringify({ rows, added, questions }) + '\n```' });
     }
     if (p === '/v1/agents/bc-1' && req.method === 'DELETE') {
       cursorCalls.push({ deleted: true });
@@ -56,13 +83,12 @@ const server = createServer((req, res) => {
     if (p === '/rest/api/3/myself') return send({ accountId: 'me', displayName: 'Alex' });
     if (p === '/rest/api/3/project/search') return send({ values: [{ key: 'PAY' }, { key: 'OPS' }], isLast: true });
     if (p === '/rest/api/3/search/jql' && JSON.parse(body).jql.startsWith('assignee = currentUser() AND statusCategory != Done')) {
-      return send({
-        issues: [
-          { key: 'PAY-7', fields: { summary: 'Refund flow for card payments' } },
-          { key: 'PAY-8', fields: { summary: 'Payout reports for finance' } },
-          { key: 'PAY-9', fields: { summary: 'Payout CSV export for finance' } },
-        ],
-      });
+      return send({ issues: ['PAY-7', 'PAY-8', 'PAY-9'].map(issueJson), isLast: true });
+    }
+    if (p === '/rest/api/3/search/jql' && JSON.parse(body).jql.startsWith('key in (')) {
+      const keys = /key in \((.*)\)/.exec(JSON.parse(body).jql)[1].split(', ');
+      if (keys.some((k) => !issues[k])) return send({ errorMessages: ['An issue key does not exist'] }, 400);
+      return send({ issues: keys.map(issueJson), isLast: true });
     }
     if (p === '/rest/api/3/search/jql' && JSON.parse(body).jql.startsWith('worklogAuthor = currentUser()')) {
       const keys = [...new Set(posted.filter((w) => !w.deleted).map((w) => w.key))];
@@ -195,6 +221,49 @@ try {
   console.log('posted:', JSON.stringify(posted));
   if (posted.length !== 1 || posted[0].timeSpentSeconds !== 4500 || posted[0].xsrf !== 'no-check') fail('unexpected worklog post');
 
+  // 4b. Your ticket list: fetch assigned, search, paste, flag, group and reorder.
+  const tickets = await context.newPage();
+  await tickets.goto(page('tickets.html'));
+  await tickets.waitForSelector('.empty');
+  await tickets.click('#fetch-assigned');
+  await tickets.waitForFunction(() => document.querySelectorAll('.ticket').length === 3);
+  await tickets.fill('#search', 'rotate');
+  await tickets.waitForSelector('#results li');
+  await tickets.click('#results li:has-text("OPS-12")');
+  await tickets.waitForFunction(() => document.querySelectorAll('.ticket').length === 4);
+  await tickets.click('#paste-toggle');
+  await tickets.fill('#paste-text', 'ops-13 NOPE-1');
+  await tickets.click('#paste-add');
+  await tickets.waitForFunction(() => document.querySelectorAll('.ticket').length === 5);
+  const shown = () => tickets.$$eval('.ticket', (rs) => rs.map((r) => `${r.dataset.key}${r.style.getPropertyValue('--depth').trim() === '1' ? '(sub)' : ''}`).join(' '));
+  console.log('ticket list:', await shown());
+  if ((await shown()) !== 'OPS-12 OPS-13(sub) PAY-8 PAY-9(sub) PAY-7') fail('tickets are not newest first with sub-tasks under their parents');
+  await tickets.click('.ticket[data-key="OPS-12"] .flag');
+  await tickets.check('.ticket[data-key="PAY-7"] input[type=checkbox]');
+  await tickets.check('.ticket[data-key="PAY-9"] input[type=checkbox]');
+  await tickets.click('#sel-flag');
+  await tickets.waitForFunction(() => document.querySelectorAll('.flag[aria-pressed="true"]').length === 3);
+  await tickets.check('.ticket[data-key="PAY-9"] input[type=checkbox]');
+  await tickets.click('#sel-unflag');
+  await tickets.waitForFunction(() => document.querySelectorAll('.flag[aria-pressed="true"]').length === 2);
+  await tickets.dragAndDrop('.ticket[data-key="PAY-7"]', '.ticket[data-key="OPS-12"]', { targetPosition: { x: 200, y: 5 } });
+  await tickets.waitForFunction(() => document.querySelector('.ticket').dataset.key === 'PAY-7');
+  await tickets.focus('.ticket[data-key="PAY-8"] .handle');
+  await tickets.keyboard.press('ArrowUp');
+  await tickets.waitForFunction(() => document.querySelectorAll('.ticket')[1].dataset.key === 'PAY-8');
+  console.log('after drag and keyboard move:', await shown(), '·', await tickets.textContent('#list-title'));
+  if ((await shown()) !== 'PAY-7 PAY-8 PAY-9(sub) OPS-12 OPS-13(sub)') fail('drag or keyboard reorder did not stick');
+  const storedTickets = await worker.evaluate(async () => (await chrome.storage.local.get('tickets')).tickets);
+  if (!storedTickets.manualOrder || storedTickets.tickets.map((t) => t.key).join(' ') !== 'PAY-7 PAY-8 PAY-9 OPS-12 OPS-13') fail('ticket order was not saved');
+  if (shots) await tickets.screenshot({ path: join(shots, 'tickets.png'), fullPage: true });
+  await tickets.reload();
+  await tickets.waitForSelector('.ticket');
+  if ((await shown()) !== 'PAY-7 PAY-8 PAY-9(sub) OPS-12 OPS-13(sub)') fail('ticket order lost after reload');
+  if (shots) {
+    await tickets.emulateMedia({ colorScheme: 'dark' });
+    await tickets.screenshot({ path: join(shots, 'tickets-dark.png'), fullPage: true });
+  }
+
   // 5. Fill in with AI through a (fake) Cursor key.
   await worker.evaluate(async (site) => {
     const { settings } = await chrome.storage.local.get('settings');
@@ -236,7 +305,30 @@ try {
   console.log('AI added from summary:', added.join(' | '));
   if (!cursorCalls.at(-2)?.body?.prompt.text.includes('"personSummary": "Demoed payout reports')) fail('summary was not sent to Cursor');
   if (added.join('|') !== 'PAY-8 45m|Unassigned 30m') fail('unexpected entries from the day summary');
+  const summaryPrompt = cursorCalls.at(-2)?.body?.prompt.text ?? '';
+  if (!summaryPrompt.includes('"savedIssues"') || summaryPrompt.indexOf('"key": "PAY-7"') > summaryPrompt.indexOf('"key": "PAY-9"')) fail('saved tickets were not sent flagged-first');
   if (shots) await review.screenshot({ path: join(shots, 'review-summary-ai.png'), fullPage: true });
+
+  // Cursor asked where the interview goes; only tickets you may use are offered.
+  await review.waitForSelector('.ask');
+  const askOptions = await review.$$eval('.ask-option strong', (os) => os.map((o) => o.textContent));
+  console.log('AI question:', await review.textContent('.ask-q'), '· options:', askOptions.join(', '));
+  if (askOptions.join('|') !== 'OPS-12|OPS-13') fail('question options should be OPS-12 and OPS-13 only');
+  if (shots) await review.screenshot({ path: join(shots, 'review-question.png'), fullPage: true });
+  await review.click('.ask-option:has-text("OPS-13")');
+  await review.waitForSelector('.row:has(.row-key:text-is("OPS-13"))');
+  if (await review.$('.ask')) fail('question did not close after answering');
+  const answers = await worker.evaluate(async () => (await chrome.storage.local.get('ai')).ai.answers);
+  if (answers?.[0] !== 'OPS-13') fail('answer was not remembered');
+  // The issue picker offers your list first, flagged tickets on top.
+  await review.click('.row:has(.row-key:text-is("OPS-13")) .row-main');
+  await review.fill('.row.open .search input', '');
+  await review.waitForSelector('.row.open .results li');
+  const picks = await review.$$eval('.row.open .results li strong', (ls) => ls.map((l) => l.textContent));
+  console.log('picker before typing:', picks.join(', '));
+  if (picks[0] !== 'PAY-7' || picks[1] !== 'OPS-12') fail('picker should start with flagged tickets from your list');
+  await review.fill('.row.open .search input', 'OPS-13');
+  await review.click('.row:has(.row-key:text-is("OPS-13")) .row-main');
   await review.click('.row:has(.row-key:text-is("PAY-8")):has(.note.ai) .row-main');
   await review.click('.row.open .btn-primary');
   await review.waitForFunction(() => !document.querySelector('.row.open'));

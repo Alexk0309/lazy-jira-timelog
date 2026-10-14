@@ -1,6 +1,7 @@
-import type { AiNewEntry, AiSuggestion } from '../ai';
+import type { AiNewEntry, AiQuestion, AiSuggestion } from '../ai';
 import { isUnassignedKey } from '../classify';
 import { roundToStep } from '../core/drafts';
+import { prioritized, type Ticket } from '../core/tickets';
 import { dayStart, formatDuration, parseDuration } from '../core/time';
 import type { Draft } from '../core/types';
 import type { IssueSummary } from '../jira';
@@ -21,6 +22,8 @@ interface Row {
   done: boolean;
   /** For added rows: which AI run and entry it came from. */
   ai?: { at: number; index: number };
+  /** Cursor's question about which issue this time belongs to, until you answer it. */
+  question?: { at: number; index: number; ask: AiQuestion };
   note?: { text: string; level: 'warn' | 'error' | 'ok' | 'ai' };
 }
 
@@ -41,11 +44,19 @@ let aiBusyDay: string | null = null;
 /** Day whose "describe your day" box is open, if any. */
 let aiComposerDay: string | null = null;
 const summaries = new Map<string, string | null>();
+/** Your ticket list, flagged first; offered first in the issue picker. */
+let saved: Ticket[] = [];
 
 /** Saved AI suggestions older than this aren't re-applied when the popup opens. */
 const AI_FRESH_MS = 12 * 3_600_000;
 
 $('settings').addEventListener('click', () => chrome.runtime.openOptionsPage());
+$('tickets').addEventListener('click', () => {
+  void chrome.tabs.create({ url: chrome.runtime.getURL('tickets.html') });
+  if (isPopup) {
+    window.close();
+  }
+});
 $('calendar').addEventListener('click', () => {
   void chrome.tabs.create({ url: chrome.runtime.getURL('calendar.html') });
   if (isPopup) {
@@ -84,6 +95,14 @@ async function load(): Promise<void> {
   render();
 
   if (!state.setupMessage) {
+    void call('tickets')
+      .then((list) => {
+        saved = prioritized(list);
+        for (const t of saved) {
+          summaries.set(t.key, t.summary);
+        }
+      })
+      .catch(() => undefined);
     void loadSuggestions();
     void loadSummaries(rows.map((r) => r.targetKey));
     void loadManualLogs();
@@ -249,6 +268,9 @@ function renderRow(row: Row): HTMLElement {
   });
   container.append(main);
 
+  if (row.question && !row.done) {
+    container.append(renderQuestion(row));
+  }
   if (row.id === openId && !row.done) {
     container.append(renderEditor(row));
   } else if (row.note) {
@@ -262,33 +284,57 @@ function renderEditor(row: Row): HTMLElement {
   const issue = el('input', { type: 'text', value: row.targetKey, placeholder: 'Search Jira issues', 'aria-label': 'Jira issue' }) as HTMLInputElement;
   const results = el('ul', { class: 'results', hidden: '' });
   let timer = 0;
+  const showResults = (found: IssueSummary[]) => {
+    const flagged = new Set(saved.filter((t) => t.flagged).map((t) => t.key));
+    results.replaceChildren(
+      ...found.map((r) => {
+        const li = el('li', { tabindex: '0', class: flagged.has(r.key) ? 'flagged' : '' }, el('strong', {}, r.key), r.summary);
+        const pick = () => {
+          row.targetKey = r.key;
+          summaries.set(r.key, r.summary);
+          issue.value = r.key;
+          results.hidden = true;
+          if (row.question) {
+            answerQuestion(row, r.key);
+          }
+          updateHeader(row);
+        };
+        li.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          pick();
+        });
+        li.addEventListener('keydown', (e) => e.key === 'Enter' && pick());
+        return li;
+      }),
+    );
+    results.hidden = found.length === 0;
+  };
+  // Your ticket list comes first: on focus before you type, and on top of Jira's matches after.
+  const savedMatching = (query: string) => {
+    const q = query.trim().toLowerCase();
+    return saved.filter((t) => !q || t.key.toLowerCase().includes(q) || t.summary.toLowerCase().includes(q)).slice(0, 8);
+  };
+  issue.addEventListener('focus', () => {
+    if (!issue.value.trim() || issue.value.trim() === row.targetKey) {
+      showResults(savedMatching(''));
+    }
+  });
   issue.addEventListener('input', () => {
     row.targetKey = issue.value.trim().toUpperCase();
     if (row.note?.level === 'ai') {
       row.note = undefined;
     }
     clearTimeout(timer);
+    const query = issue.value;
+    const mine = savedMatching(query);
+    showResults(mine);
     timer = window.setTimeout(async () => {
-      const found = await call('search', { query: issue.value }).catch(() => [] as IssueSummary[]);
-      results.replaceChildren(
-        ...found.map((r) => {
-          const li = el('li', { tabindex: '0' }, el('strong', {}, r.key), r.summary);
-          const pick = () => {
-            row.targetKey = r.key;
-            summaries.set(r.key, r.summary);
-            issue.value = r.key;
-            results.hidden = true;
-            updateHeader(row);
-          };
-          li.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            pick();
-          });
-          li.addEventListener('keydown', (e) => e.key === 'Enter' && pick());
-          return li;
-        }),
-      );
-      results.hidden = found.length === 0;
+      const found = query.trim().length >= 2 ? await call('search', { query }).catch(() => [] as IssueSummary[]) : [];
+      if (issue.value !== query) {
+        return;
+      }
+      const keys = new Set(mine.map((t) => t.key));
+      showResults([...mine, ...found.filter((r) => !keys.has(r.key))].slice(0, 10));
     }, 250);
   });
   issue.addEventListener('blur', () => {
@@ -385,6 +431,60 @@ function subtitle(row: Row): string {
     return `${row.targetKey} wasn't found in Jira`;
   }
   return summary ?? row.comment.split('\n')[0];
+}
+
+/** Cursor's question, with your tickets as one-click answers. */
+function renderQuestion(row: Row): HTMLElement {
+  const { ask } = row.question!;
+  const options = ask.options.map((o) => {
+    const button = el(
+      'button',
+      { class: 'ask-option', type: 'button', 'aria-pressed': String(row.targetKey === o.key) },
+      el('strong', {}, `${o.key}${row.targetKey === o.key ? ' · current guess' : ''}`),
+      o.summary ? el('span', {}, o.summary) : '',
+      o.why ? el('em', {}, o.why) : '',
+    );
+    button.addEventListener('click', () => {
+      row.targetKey = o.key;
+      if (o.summary) {
+        summaries.set(o.key, o.summary);
+      }
+      answerQuestion(row, o.key);
+      render();
+    });
+    return button;
+  });
+  const other = el('button', { class: 'btn btn-plain', type: 'button' }, 'Another issue…');
+  other.addEventListener('click', () => {
+    openId = row.id;
+    render();
+    document.querySelector<HTMLInputElement>(`.row[data-id="${row.id}"] .search input`)?.focus();
+  });
+  const skip = el('button', { class: 'btn btn-plain', type: 'button' }, 'Skip');
+  skip.addEventListener('click', () => {
+    answerQuestion(row, '');
+    render();
+  });
+  return el(
+    'div',
+    { class: 'ask', role: 'group', 'aria-label': 'Question from AI' },
+    el('p', { class: 'ask-q' }, sparkle(), ask.question),
+    el('div', { class: 'ask-options' }, ...options),
+    el('div', { class: 'actions' }, other, el('span', { class: 'spacer' }), skip),
+  );
+}
+
+/** Closes the question and remembers the answer, so reopening the popup doesn't ask again. */
+function answerQuestion(row: Row, key: string): void {
+  const q = row.question;
+  if (!q) {
+    return;
+  }
+  row.question = undefined;
+  if (key) {
+    row.note = { text: `You picked ${key}`, level: 'ai' };
+  }
+  void call('answerAiQuestion', { at: q.at, index: q.index, key }).catch(() => undefined);
 }
 
 // ---------- Actions ----------
@@ -544,8 +644,15 @@ async function fillInWithAi(day: string, summary = ''): Promise<void> {
   try {
     const result = await call('aiSuggest', { day, summary });
     const at = (await call('aiState').catch(() => undefined))?.at ?? Date.now();
-    const changed = applyResult(day, result.rows, result.added, at);
-    toast(changed > 0 ? `Filled in ${changed} ${changed === 1 ? 'entry' : 'entries'}. Check them, then log.` : 'Cursor had nothing to add.');
+    const changed = applyResult(day, result.rows, result.added, at, [], result.questions);
+    const asked = rows.filter((r) => r.question).length;
+    toast(
+      asked > 0
+        ? `Filled in ${changed} ${changed === 1 ? 'entry' : 'entries'}. ${asked} ${asked === 1 ? 'question needs' : 'questions need'} your answer.`
+        : changed > 0
+          ? `Filled in ${changed} ${changed === 1 ? 'entry' : 'entries'}. Check them, then log.`
+          : 'Cursor had nothing to add.',
+    );
   } catch (err) {
     aiComposerDay = day;
     toast((err as Error).message);
@@ -559,7 +666,15 @@ async function fillInWithAi(day: string, summary = ''): Promise<void> {
  * Puts an AI answer into the day: comments and times on open rows, an issue
  * for unassigned rows only, and new rows for work from the day summary.
  */
-function applyResult(day: string, suggestions: AiSuggestion[], added: AiNewEntry[] = [], at = 0, consumed: number[] = []): number {
+function applyResult(
+  day: string,
+  suggestions: AiSuggestion[],
+  added: AiNewEntry[] = [],
+  at = 0,
+  consumed: number[] = [],
+  questions: AiQuestion[] = [],
+  answers: Record<number, string> = {},
+): number {
   let changed = 0;
   for (const s of suggestions) {
     const row = rows.find((r) => r.day === day && r.kind === 'tracked' && !r.done && r.sourceKey === s.id);
@@ -622,6 +737,24 @@ function applyResult(day: string, suggestions: AiSuggestion[], added: AiNewEntry
     started += seconds * 1000;
     changed++;
   });
+
+  // Questions sit on the row they're about; an answer you already gave is applied instead.
+  questions.forEach((ask, index) => {
+    const added = /^added:(\d+)$/.exec(ask.target);
+    const row = rows.find((r) =>
+      r.day === day && !r.done && (added ? r.kind === 'added' && r.ai?.at === at && r.ai.index === Number(added[1]) : r.kind === 'tracked' && r.sourceKey === ask.target),
+    );
+    if (!row) {
+      return;
+    }
+    const answer = answers[index];
+    if (answer === undefined) {
+      row.question = { at, index, ask };
+    } else if (answer) {
+      row.targetKey = answer;
+      row.note = { text: `You picked ${answer}`, level: 'ai' };
+    }
+  });
   return changed;
 }
 
@@ -638,7 +771,7 @@ async function resumeAi(): Promise<void> {
     aiBusyDay = null;
   }
   if (state?.status === 'done' && Date.now() - state.at < AI_FRESH_MS) {
-    applyResult(state.day, state.suggestions ?? [], state.added ?? [], state.at, state.consumed ?? []);
+    applyResult(state.day, state.suggestions ?? [], state.added ?? [], state.at, state.consumed ?? [], state.questions ?? [], state.answers ?? {});
   }
   render();
 }
