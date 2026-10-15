@@ -1,0 +1,51 @@
+name: Guide screenshots
+
+# After every merge to main that touches the extension, rebuild it, retake the
+# guide's screenshots from the end-to-end run and commit them to docs/guide/img.
+
+on:
+  push:
+    branches: [main]
+    paths: ['browser-extension/**', 'docs/guide/tools/**', '.github/workflows/guide.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: guide-screenshots
+  cancel-in-progress: false
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: browser-extension/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pillow
+      - run: npm ci
+        working-directory: browser-extension
+      - run: npx playwright install --with-deps --no-shell chromium
+        working-directory: browser-extension
+      - run: npm run e2e -- "$RUNNER_TEMP/shots"
+        working-directory: browser-extension
+      - run: python docs/guide/tools/crop_screenshots.py "$RUNNER_TEMP/shots" docs/guide/img
+      - name: Commit new screenshots
+        run: |
+          git add docs/guide/img
+          if git diff --cached --quiet; then
+            echo "Screenshots unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update guide screenshots for ${GITHUB_SHA::7}"
+          git pull --rebase origin main
+          git push origin HEAD:main
