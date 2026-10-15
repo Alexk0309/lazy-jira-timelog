@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Lazy Jira Timelog Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; }
+img { max-width: 100%; }
+/* Layout: sticky contents rail on the left, each use case as steps beside a framed screenshot; one column on phones. */
+:root {
+  --bg: #f3f4f7;
+  --surface: #ffffff;
+  --ink: #161a22;
+  --muted: #5b6372;
+  --line: #dde1e8;
+  --accent: #0a6cf0;
+  --accent-soft: #e4eefd;
+  --warn: #b25e00;
+  --warn-soft: #fff2df;
+  --ok: #1d7a46;
+  --diagram-fill: #ffffff;
+  --font-display: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12151b; --surface: #1b1f27; --ink: #e8ebf1; --muted: #9aa3b2; --line: #2c323d;
+    --accent: #5aa1ff; --accent-soft: #1b2c47; --warn: #f0a75a; --warn-soft: #3a2a17; --ok: #5fd08f;
+    --diagram-fill: #1b1f27; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12151b; --surface: #1b1f27; --ink: #e8ebf1; --muted: #9aa3b2; --line: #2c323d;
+  --accent: #5aa1ff; --accent-soft: #1b2c47; --warn: #f0a75a; --warn-soft: #3a2a17; --ok: #5fd08f;
+  --diagram-fill: #1b1f27; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.6; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 80px; display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 48px; }
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 24px); align-self: start; font-size: 14px; }
+nav.toc p { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; counter-reset: uc; }
+nav.toc a { display: flex; gap: 8px; color: var(--muted); text-decoration: none; padding: 5px 8px; border-radius: 6px; }
+nav.toc a:hover, nav.toc a:focus-visible { color: var(--ink); background: var(--surface); outline: none; }
+nav.toc .n { font-family: var(--font-mono); font-size: 12px; color: var(--accent); min-width: 1.6em; padding-top: 1px; }
+main { min-width: 0; display: grid; gap: 72px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: clamp(32px, 5vw, 46px); font-weight: 700; letter-spacing: -.02em; }
+h2 { font-size: 26px; font-weight: 650; letter-spacing: -.01em; }
+h3 { font-size: 17px; font-weight: 600; }
+p { margin: 0; max-width: 65ch; }
+code, kbd, .mono { font-family: var(--font-mono); font-size: .86em; }
+code { background: var(--accent-soft); color: var(--ink); padding: 1px 5px; border-radius: 4px; }
+kbd { border: 1px solid var(--line); border-bottom-width: 2px; background: var(--surface); padding: 0 6px; border-radius: 5px; white-space: nowrap; }
+.eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+header.hero { display: grid; gap: 16px; }
+header.hero .lede { font-size: 19px; color: var(--muted); }
+.facts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.chip { font-size: 13px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); }
+section { display: grid; gap: 20px; scroll-margin-top: 24px; }
+.sec-head { display: grid; gap: 6px; }
+.sec-head .num { font-family: var(--font-mono); font-size: 13px; color: var(--accent); }
+.sec-head p { color: var(--muted); }
+.uc { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: start; }
+.uc.wide-shot { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
+ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: grid; gap: 14px; }
+ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; }
+ol.steps > li::before { content: counter(s); font-family: var(--font-mono); font-size: 13px; font-weight: 600; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); margin-top: 1px; }
+ol.steps ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 15px; display: grid; gap: 3px; }
+figure { margin: 0; display: grid; gap: 8px; }
+.frame { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(20,30,50,.06); }
+.frame .bar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); font-family: var(--font-mono); }
+.frame .bar i { width: 8px; height: 8px; border-radius: 50%; background: var(--line); display: block; }
+.frame .bar span { margin-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frame img { display: block; width: 100%; height: auto; }
+figcaption { font-size: 13px; color: var(--muted); }
+.shots { display: grid; gap: 16px; }
+.shots.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.popup-pair { display: flex; gap: 16px; flex-wrap: wrap; }
+.popup-pair figure { flex: 1 1 180px; max-width: 260px; }
+.note { border-radius: 10px; padding: 12px 16px; font-size: 15px; display: grid; gap: 4px; background: var(--accent-soft); }
+.note.warn { background: var(--warn-soft); }
+.note b { font-weight: 600; }
+.note.warn b { color: var(--warn); }
+.grid-rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.rule { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 4px; align-content: start; }
+.rule h3 { font-size: 15px; }
+.rule p { font-size: 14px; color: var(--muted); }
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.diagram svg { display: block; min-width: 760px; width: 100%; height: auto; }
+.diagram .box { fill: var(--diagram-fill); stroke: var(--line); stroke-width: 1.5; }
+.diagram .box.hl { stroke: var(--accent); }
+.diagram .box.you { fill: var(--accent-soft); stroke: var(--accent); }
+.diagram .t { fill: var(--ink); font: 600 13px var(--font-body); }
+.diagram .s { fill: var(--muted); font: 400 11.5px var(--font-body); }
+.diagram .lane { fill: var(--muted); font: 600 10.5px var(--font-body); letter-spacing: .08em; }
+.diagram .arr { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.diagram .arr.ai { stroke: var(--accent); stroke-dasharray: 5 4; }
+.diagram marker path { fill: var(--muted); }
+ol.steps > li > div { min-width: 0; }
+pre.code { font-family: var(--font-mono); font-size: 13px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; overflow-x: auto; white-space: pre; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.tbl { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { white-space: nowrap; font-weight: 600; }
+footer { color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 20px; display: grid; gap: 6px; }
+a { color: var(--accent); }
+@media (max-width: 900px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 32px; padding-inline: 16px; padding-block: 24px 64px; }
+  nav.toc { position: static; }
+  nav.toc ol { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+  .uc, .uc.wide-shot, .shots.two { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#how"><span class="n">·</span>How it works</a></li>
+    <li><a href="#nav"><span class="n">·</span>Getting around</a></li>
+    <li><a href="#install"><span class="n">01</span>Install, connect, update</a></li>
+    <li><a href="#track"><span class="n">02</span>Let it track your day</a></li>
+    <li><a href="#log"><span class="n">03</span>Review and log</a></li>
+    <li><a href="#otherday"><span class="n">04</span>Log another day</a></li>
+    <li><a href="#unassigned"><span class="n">05</span>Assign PR time</a></li>
+    <li><a href="#offline"><span class="n">06</span>Add untracked work</a></li>
+    <li><a href="#tickets"><span class="n">07</span>Build your ticket list</a></li>
+    <li><a href="#ai"><span class="n">08</span>Fill in with AI</a></li>
+    <li><a href="#summary"><span class="n">09</span>Describe your day</a></li>
+    <li><a href="#questions"><span class="n">10</span>Answer AI questions</a></li>
+    <li><a href="#calendar"><span class="n">11</span>Fix past worklogs</a></li>
+    <li><a href="#remind"><span class="n">12</span>Reminder and badge</a></li>
+    <li><a href="#settings"><span class="n">13</span>Tune the settings</a></li>
+    <li><a href="#cheat"><span class="n">·</span>Cheat sheet</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <span class="eyebrow">Revision guide · main branch</span>
+  <h1>Lazy Jira Timelog</h1>
+  <p class="lede">A Chrome and Edge extension that notices the time you spend on anything tied to a Jira issue, then hands you a ready list of worklogs to send to Jira in one click. No timer to start, no server, no chat bot.</p>
+  <div class="facts">
+    <span class="chip">Chrome &amp; Edge, Manifest V3</span>
+    <span class="chip">Install from a git clone</span>
+    <span class="chip">Stores keys, site names, PR titles only</span>
+    <span class="chip">Rounds to 15 min by default</span>
+    <span class="chip">Log any day</span>
+    <span class="chip">Your own ticket list</span>
+    <span class="chip">Optional Cursor AI</span>
+  </div>
+  <div class="note"><b>New in this version</b><span><a href="#estimates">Ticket titles and estimate bars</a> on Review and Calendar rows; <a href="#otherday">logging time on any day</a> with a week strip, date picker and Add entry; and <a href="#calendar">moving a worklog</a> to another ticket or date, plus Add log from the Calendar.</span></div>
+</header>
+
+<section id="how">
+  <div class="sec-head">
+    <span class="num">Overview</span>
+    <h2>How it works</h2>
+    <p>The browser watches only the focused tab. When that tab is about a Jira issue, a background worker writes a small heartbeat every 30 seconds. At review time heartbeats become sessions, sessions become one draft row per issue, and you confirm them before anything reaches Jira.</p>
+  </div>
+  <div class="diagram" role="img" aria-label="Flow: focused tab is classified to an issue key, heartbeats are stored locally, built into sessions and draft rows, reviewed by you, and posted to Jira as worklogs. Optional Cursor AI fills comments and matches unassigned rows. The calendar reads and edits worklogs already in Jira.">
+    <svg viewBox="0 0 900 300" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+      <text class="lane" x="16" y="24">IN YOUR BROWSER (NOTHING LEAVES IT)</text>
+      <text class="lane" x="676" y="24">JIRA</text>
+
+      <rect class="box" x="16" y="40" width="150" height="76" rx="10"/>
+      <text class="t" x="30" y="66">Focused tab</text>
+      <text class="s" x="30" y="86">Jira issue, PR, branch,</text>
+      <text class="s" x="30" y="102">doc showing a key</text>
+
+      <rect class="box" x="196" y="40" width="150" height="76" rx="10"/>
+      <text class="t" x="210" y="66">Classify</text>
+      <text class="s" x="210" y="86">Which issue key?</text>
+      <text class="s" x="210" y="102">No key on a PR = Unassigned</text>
+
+      <rect class="box" x="376" y="40" width="150" height="76" rx="10"/>
+      <text class="t" x="390" y="66">Heartbeats</text>
+      <text class="s" x="390" y="86">Every 30 s while active</text>
+      <text class="s" x="390" y="102">Stops on idle or lock</text>
+
+      <rect class="box hl" x="376" y="168" width="150" height="76" rx="10"/>
+      <text class="t" x="390" y="194">Draft rows</text>
+      <text class="s" x="390" y="214">Sessions per issue,</text>
+      <text class="s" x="390" y="230">rounded to 15 min</text>
+
+      <rect class="box you" x="556" y="168" width="100" height="76" rx="10"/>
+      <text class="t" x="570" y="194">You review</text>
+      <text class="s" x="570" y="214">Edit, split,</text>
+      <text class="s" x="570" y="230">press Log</text>
+
+      <rect class="box" x="676" y="168" width="208" height="76" rx="10"/>
+      <text class="t" x="690" y="194">Worklogs</text>
+      <text class="s" x="690" y="214">One per row, with start</text>
+      <text class="s" x="690" y="230">time, duration, comment</text>
+
+      <rect class="box" x="676" y="40" width="208" height="76" rx="10"/>
+      <text class="t" x="690" y="66">Your issues</text>
+      <text class="s" x="690" y="86">Assigned to you, touched today,</text>
+      <text class="s" x="690" y="102">search for the picker</text>
+
+      <rect class="box" x="196" y="168" width="150" height="76" rx="10" style="stroke-dasharray:5 4"/>
+      <text class="t" x="210" y="194">Cursor AI (optional)</text>
+      <text class="s" x="210" y="214">Prefers your ticket list,</text>
+      <text class="s" x="210" y="230">asks when unsure</text>
+
+      <rect class="box" x="16" y="168" width="150" height="76" rx="10"/>
+      <text class="t" x="30" y="194">Your ticket list</text>
+      <text class="s" x="30" y="214">Saved, flagged,</text>
+      <text class="s" x="30" y="230">in your order</text>
+      <path class="arr ai" d="M166 206 H192" marker-end="url(#ah)"/>
+
+      <rect class="box" x="676" y="262" width="208" height="30" rx="8"/>
+      <text class="s" x="690" y="282">Calendar reads, edits, deletes ↑</text>
+
+      <path class="arr" d="M166 78 H192" marker-end="url(#ah)"/>
+      <path class="arr" d="M346 78 H372" marker-end="url(#ah)"/>
+      <path class="arr" d="M451 116 V164" marker-end="url(#ah)"/>
+      <path class="arr" d="M526 206 H552" marker-end="url(#ah)"/>
+      <path class="arr" d="M656 206 H672" marker-end="url(#ah)"/>
+      <path class="arr ai" d="M346 206 H372" marker-end="url(#ah)"/>
+      <path class="arr" d="M780 116 V138 H606 V164" marker-end="url(#ah)"/>
+      <path class="arr" d="M780 262 V248" marker-end="url(#ah)"/>
+    </svg>
+  </div>
+  <div class="grid-rules">
+    <div class="rule"><h3>Counts</h3><p>Only the focused tab, and only when it's a Jira issue, a PR or branch whose title or name has the key (e.g. <code>PAY-7</code>), or any page showing a known key.</p></div>
+    <div class="rule"><h3>Stops</h3><p>After 15 min without input, when the screen locks, or 2 min after you switch to something unrelated.</p></div>
+    <div class="rule"><h3>Never sent</h3><p>Page addresses and browsing history. Only the issue key, the site name and PR titles are stored, in the browser.</p></div>
+    <div class="rule"><h3>Nothing auto-logs</h3><p>Every worklog, including anything AI drafts, waits for you to press <b>Log</b>.</p></div>
+  </div>
+</section>
+
+<section id="nav">
+  <div class="sec-head">
+    <span class="num">Getting around</span>
+    <h2>The tab bar</h2>
+    <p>Every view has the same tab bar at the top: <b>Review</b>, <b>Tickets</b>, <b>Calendar</b> and <b>Settings</b>. Tapping one switches the view in place, in the toolbar popup and in a full page alike. No new browser tabs pile up.</p>
+  </div>
+  <div class="popup-pair" style="max-width:820px">
+    <figure><div class="frame"><img src="img/popup.png" alt="Popup on the Review tab" loading="lazy"></div><figcaption>Review</figcaption></figure>
+    <figure><div class="frame"><img src="img/popup-tickets.png" alt="Popup on the Tickets tab" loading="lazy"></div><figcaption>Tickets</figcaption></figure>
+    <figure><div class="frame"><img src="img/popup-calendar.png" alt="Popup on the Calendar tab" loading="lazy"></div><figcaption>Calendar</figcaption></figure>
+  </div>
+  <div class="grid-rules">
+    <div class="rule"><h3>Open as a page</h3><p>In the popup, the arrow button beside the tabs opens the current view in a full browser tab.</p></div>
+    <div class="rule"><h3>Settings from the popup</h3><p>Opens in a page, reusing one that's already open. The browser's site-access prompt would otherwise close the popup mid-answer.</p></div>
+    <div class="rule"><h3>Settings in a page</h3><p>Just another tab. Switch back to Review or Tickets without leaving the page.</p></div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="sec-head">
+    <span class="num">Use case 01</span>
+    <h2>Install, connect and update</h2>
+    <p>One-time setup from a git clone. You need Git and Node.js 18 or later. The same build works in Chrome and Edge.</p>
+  </div>
+  <div class="uc wide-shot">
+    <div style="display:grid;gap:20px;min-width:0">
+    <div><h3 style="margin-bottom:10px">Install</h3>
+    <ol class="steps">
+      <li><div>Clone the repository and build the extension:
+        <pre class="code">git clone https://github.com/Alexk0309/lazy-jira-timelog.git
+cd lazy-jira-timelog/browser-extension
+npm install
+npm run build</pre>
+        This creates <code>browser-extension/dist</code>. That folder is the extension.</div></li>
+      <li><div>Open the extensions page and turn on <b>Developer mode</b>.
+        <ul><li>Chrome: <code>chrome://extensions</code>, switch at top right.</li><li>Edge: <code>edge://extensions</code>, switch in the left sidebar.</li></ul></div></li>
+      <li><div>Click <b>Load unpacked</b> and pick the <code>browser-extension/dist</code> folder. Settings opens by itself.</div></li>
+      <li><div>Enter your Jira site, e.g. <code>https://your-team.atlassian.net</code>.</div></li>
+      <li><div>Choose how to sign in.
+        <ul><li><b>Browser</b> (default) reuses the Jira session you're already logged in to.</li><li><b>API token</b> is the fallback if your company blocks that. Create one at id.atlassian.com → Security → API tokens.</li></ul></div></li>
+      <li><div>Click <b>Test connection</b>. You should see "Connected as &lt;you&gt;… N projects found."</div></li>
+      <li><div>Self-hosted GitLab or another tool? Add its domain under <b>Sites</b> and allow it when the browser asks.</div></li>
+      <li><div>Pin the extension from the browser's puzzle-piece menu so the badge and popup are always visible.</div></li>
+    </ol></div>
+    <div><h3 style="margin-bottom:10px">Update to a newer version</h3>
+    <ol class="steps">
+      <li><div>Pull and rebuild:
+        <pre class="code">cd lazy-jira-timelog/browser-extension
+git pull
+npm install
+npm run build</pre></div></li>
+      <li><div>On the extensions page, click the reload icon on the Lazy Jira Timelog card. Settings, your ticket list and tracked time are kept.</div></li>
+    </ol>
+    <div class="note warn" style="margin-top:14px"><b>Don't remove the extension to update it</b><span>Removing it deletes its saved data: settings, ticket list and unlogged time. Reload it instead.</span></div>
+    </div>
+    </div>
+    <figure>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Settings</span></div><img src="img/settings.png" alt="Settings page with Jira site, sign-in choice, daily rhythm, AI with Cursor and Sites sections" loading="lazy"></div>
+      <figcaption>Settings after a successful test. The site shown is the demo Jira used for these screenshots.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="track">
+  <div class="sec-head">
+    <span class="num">Use case 02</span>
+    <h2>Let it track your day</h2>
+    <p>There's nothing to start or stop. Just work.</p>
+  </div>
+  <div class="uc">
+    <ol class="steps">
+      <li><div>Open the Jira issue, PR, branch or doc you're working on and keep it focused.</div></li>
+      <li><div>Name branches and PRs with the issue key (<code>PAY-7-refunds</code>, "PAY-7 Refund flow") so time lands on the right issue automatically.</div></li>
+      <li><div>A PR without a key still counts. It's kept as <b>Unassigned</b> under the PR title, and you pick the issue at review (<a href="#unassigned">use case 05</a>).</div></li>
+      <li><div>Step away and tracking pauses on its own: 15 min idle, screen lock, or 2 min on unrelated tabs.</div></li>
+      <li><div>Glance at the toolbar icon. The badge shows how much is still unlogged (e.g. <code>45m</code>, <code>3h</code>).</div></li>
+    </ol>
+    <div class="note"><b>Good to know</b><span>Very short visits are dropped (sessions under 5 min by default), so flicking past an issue doesn't create noise. Change this under Settings → Ignore sessions under.</span></div>
+  </div>
+</section>
+
+<section id="log">
+  <div class="sec-head">
+    <span class="num">Use case 03</span>
+    <h2>Review and log today's time</h2>
+    <p>The core loop, usually once at the end of the day.</p>
+  </div>
+  <div class="uc">
+    <ol class="steps">
+      <li><div>Click the toolbar icon. The popup shows today's total "to log" and one row per issue, rounded to 15 min. Use the <a href="#nav">tab bar</a> to switch to Tickets, Calendar or Settings, and the arrow to open it as a full page.</div></li>
+      <li><div>Tap a row to open it. You can:
+        <ul>
+          <li>change the issue in the issue field. Before you type it offers your <a href="#tickets">ticket list</a>, flagged first; typing searches Jira;</li>
+          <li>adjust time with the <kbd>−</kbd> / <kbd>+</kbd> stepper;</li>
+          <li>edit the comment (PR titles are filled in for you);</li>
+          <li><b>Split</b> the time in two, then point the new half at another issue;</li>
+          <li><b>Discard</b> it.</li>
+        </ul></div></li>
+      <li><div>Press <b>Log</b> on a single row, or the big <b>Log 1h 15m</b> button to send every ready row at once.</div></li>
+      <li><div>Logged rows turn green and say <b>Logged</b>. Rows still needing an issue are skipped and counted under the button ("1 entry needs an issue first").</div></li>
+      <li><div>Each row shows the ticket key, its title and, if the ticket has an estimate, a progress bar. See <a href="#estimates">reading the estimate bar</a>.</div></li>
+      <li><div>Missed a day? The orange dot in the week strip marks days with time still to log. See <a href="#otherday">log time on another day</a>.</div></li>
+    </ol>
+    <div class="shots">
+      <div class="popup-pair">
+        <figure><div class="frame"><img src="img/popup.png" alt="Toolbar popup in light mode" loading="lazy"></div><figcaption>Toolbar popup, Review tab</figcaption></figure>
+        <figure><div class="frame"><img src="img/popup-dark.png" alt="Toolbar popup in dark mode" loading="lazy"></div><figcaption>It follows dark mode</figcaption></figure>
+      </div>
+      <figure>
+        <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Review · row open</span></div><img src="img/review-open.png" alt="Review page with the PAY-7 row open showing issue field, time stepper, comment box, Discard, Split and Log" loading="lazy"></div>
+        <figcaption>An open row: issue, stepper, comment, Discard, Split, Log.</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div id="estimates" style="display:grid;gap:14px;scroll-margin-top:24px">
+    <h3>Reading the estimate bar <span class="chip" style="margin-left:6px;font-size:12px">new</span></h3>
+    <div class="grid-rules">
+      <div class="rule"><h3>Solid blue</h3><p>Time already logged in Jira against the ticket's original estimate.</p></div>
+      <div class="rule"><h3>Light blue</h3><p>The time this row is about to add. The label reads e.g. "1h + 1h of 4h".</p></div>
+      <div class="rule"><h3>Red</h3><p>Logged time has gone over the estimate, e.g. "2h 15m of 2h".</p></div>
+      <div class="rule"><h3>No bar</h3><p>The ticket has no original estimate in Jira. Logging lowers the remaining estimate, the same way Jira does.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="otherday">
+  <div class="sec-head">
+    <span class="num">Use case 04 · new</span>
+    <h2>Log time on another day</h2>
+    <p>Forgot yesterday, or worked on something the browser never saw? Review can show and log any past day.</p>
+  </div>
+  <div class="uc">
+    <ol class="steps">
+      <li><div>On the <b>Review</b> tab, look at the week strip under the header. Each day shows hours already in Jira; an orange dot means tracked time is still waiting to be logged.</div></li>
+      <li><div>Pick a day by tapping it in the strip, stepping with <kbd>‹</kbd> <kbd>›</kbd>, or using the calendar button to jump to any date. Future days are greyed out; <b>Today</b> brings you back.</div></li>
+      <li><div>If other days still have time waiting, a line such as "Also to log: Today 45m" links straight to them.</div></li>
+      <li><div>Press <b>Add entry</b> to add time nothing tracked on the day on show. Pick the ticket, type a duration like <code>1h 30m</code>, add a comment.</div></li>
+      <li><div>Press <b>Log</b>. The worklog is posted on that day (starting 09:00), and the strip updates.</div></li>
+      <li><div>From the <b>Calendar</b> tab, <b>Add log</b> on a selected day opens Review on that day.</div></li>
+    </ol>
+    <div class="shots">
+      <figure>
+        <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Review · Monday</span></div><img src="img/review-other-day.png" alt="Review on Monday October 12 with the week strip, Also to log: Today 45m, and a new OPS-12 entry of 1h 30m being added" loading="lazy"></div>
+        <figcaption>Logging 1h 30m on OPS-12 for Monday, with today's waiting time linked above.</figcaption>
+      </figure>
+      <figure>
+        <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Review · week strip</span></div><img src="img/review-week.png" alt="Week strip showing 1h 30m on Monday, 45m Tuesday, 1h Wednesday with an orange dot on today" loading="lazy"></div>
+        <figcaption>After logging: hours per day in the strip, an orange dot where time still waits.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="unassigned">
+  <div class="sec-head">
+    <span class="num">Use case 05</span>
+    <h2>Assign time from a PR without a key</h2>
+    <p>Orange <b>Unassigned</b> rows are PR time the extension couldn't tie to an issue.</p>
+  </div>
+  <div class="uc">
+    <ol class="steps">
+      <li><div>Find the orange <b>Unassigned</b> row. Its subtitle is the PR title, e.g. "Fix payout CSV export (#51)".</div></li>
+      <li><div>Tap it and type a key or words from the issue summary into the issue field. Pick the match.</div></li>
+      <li><div>Check the comment (it starts as the PR title) and the time.</div></li>
+      <li><div>Press <b>Log</b>. Or let AI suggest the issue (<a href="#ai">use case 08</a>).</div></li>
+    </ol>
+    <figure>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Review</span></div><img src="img/review.png" alt="Review page with an Unassigned PR row, PAY-7 and PAY-8 rows, and OPS-12 under Touched in Jira today" loading="lazy"></div>
+      <figcaption>The Unassigned row at the top blocks only itself; the Log button still sends the other 1h 15m.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="offline">
+  <div class="sec-head">
+    <span class="num">Use case 06</span>
+    <h2>Add work the browser didn't see</h2>
+    <p>Meetings, whiteboarding, local coding. Two ways to capture it.</p>
+  </div>
+  <div class="uc">
+    <ol class="steps">
+      <li><div>Look under <b>Touched in Jira today</b>. It lists issues whose status you changed today, and issues assigned to you that were updated today, that have no tracked time.</div></li>
+      <li><div>Tap <b>Add</b> on one (e.g. OPS-12). A row opens with no time yet.</div></li>
+      <li><div>Set the time with <kbd>+</kbd>, write a comment, press <b>Log</b>.</div></li>
+      <li><div>For anything not on that list, press <b>Add entry</b> (see <a href="#otherday">another day</a>), describe it to AI (<a href="#summary">describe your day</a>), or split an existing row and repoint the half.</div></li>
+    </ol>
+    <div class="note"><b>Why this exists</b><span>Time outside the browser can't be seen directly. "Touched in Jira today" is the reminder of what you probably worked on.</span></div>
+  </div>
+</section>
+
+<section id="tickets">
+  <div class="sec-head">
+    <span class="num">Use case 07</span>
+    <h2>Build your ticket list</h2>
+    <p>The tickets you're working on right now, kept in your own order. The issue picker and Fill in with AI use this list first, which helps a lot when Jira is shared by many teams.</p>
+  </div>
+  <div class="uc wide-shot">
+    <ol class="steps">
+      <li><div>Open the <b>Tickets</b> tab.</div></li>
+      <li><div>Add tickets any of three ways:
+        <ul>
+          <li><b>Fetch my assigned tickets</b> adds every open ticket assigned to you in one click;</li>
+          <li>type in <b>Search Jira to add a ticket</b> and pick a result;</li>
+          <li><b>Paste keys</b>, then paste keys or links (e.g. <code>PAY-12 PAY-14 OPS-3</code>) and press <b>Add</b>. Keys Jira doesn't know are skipped.</li>
+        </ul></div></li>
+      <li><div>Flag the priorities. Tap the flag on one ticket, or tick several checkboxes and press <b>Flag</b> or <b>Unflag</b> in the bar that appears. That bar also has <b>Remove</b>.</div></li>
+      <li><div>Tickets are grouped under their parent.
+        <ul>
+          <li>Sub-tasks sit indented under a parent that's on your list.</li>
+          <li>If the parent isn't on your list, it still shows as a shaded heading ("Parent, not on your list"). Its checkbox selects all its sub-tickets at once.</li>
+        </ul></div></li>
+      <li><div>Fold groups away. The count button beside a parent (e.g. <b>2 ⌄</b>) collapses or expands its sub-tickets. <b>Collapse all</b> and <b>Expand all</b> sit above the list. What you collapsed is remembered.</div></li>
+      <li><div>Set your order. Drag a ticket by its handle, or focus the handle and use <kbd>↑</kbd> <kbd>↓</kbd>. The heading switches to "Your order"; <b>Sort by created date</b> puts it back to newest-created first.</div></li>
+      <li><div>Keep it tidy. The refresh icon pulls fresh status from Jira, and <b>Remove N done tickets</b> appears when some are finished.</div></li>
+    </ol>
+    <div class="shots">
+    <figure>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Tickets · expanded</span></div><img src="img/tickets.png" alt="Ticket list with 7 tickets, 2 flagged. PAY-10 is a shaded parent not on the list with sub-tickets PAY-12 and PAY-11; PAY-9 under PAY-8; OPS-13 under OPS-12. Count buttons beside each parent, and Expand all, Collapse all, Sort by created date above the list" loading="lazy"></div>
+      <figcaption>Grouped by parent. PAY-10 isn't on the list, so it shows as a shaded heading over its two sub-tickets.</figcaption>
+    </figure>
+    <figure>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Tickets · one group collapsed</span></div><img src="img/tickets-collapsed.png" alt="Same list with the PAY-10 group collapsed; its count button shows 2 with a right arrow" loading="lazy"></div>
+      <figcaption>PAY-10 collapsed. The setting survives a reload.</figcaption>
+    </figure>
+    </div>
+  </div>
+  <div class="note"><b>Good to know</b><span>The list is stored in this browser profile, so Chrome and Edge each keep their own.</span></div>
+</section>
+
+<section id="ai">
+  <div class="sec-head">
+    <span class="num">Use case 08</span>
+    <h2>Fill in with AI</h2>
+    <p>Optional. Cursor writes a one-line comment for each entry and suggests an issue for unassigned time, looking at your ticket list first.</p>
+  </div>
+  <div class="uc">
+    <div style="display:grid;gap:20px;min-width:0">
+      <div><h3 style="margin-bottom:10px">Set up once</h3>
+      <ol class="steps">
+        <li><div>In Cursor, open <b>Dashboard → API Keys</b> and create a user API key.</div></li>
+        <li><div>Paste it under <b>AI with Cursor</b> in Settings. Allow <code>api.cursor.com</code> when the browser asks.</div></li>
+        <li><div>Click <b>Test key</b>. Optionally pick a model.</div></li>
+      </ol></div>
+      <div><h3 style="margin-bottom:10px">Each day</h3>
+      <ol class="steps">
+        <li><div>On the review screen, press <b>✦ Fill in with AI</b> next to the day heading.</div></li>
+        <li><div>Leave the box empty and press <b>Fill in</b>. You can close the popup while it thinks; the result is waiting when you reopen it.</div></li>
+        <li><div>Check the result. Matched rows show "Matched by AI: &lt;reason&gt;". Cursor prefers tickets on your list, flagged ones first. Every match is checked in code against your list and your open assigned issues.</div></li>
+        <li><div>If Cursor wasn't sure, a row carries a question instead of a guess. See <a href="#questions">use case 10</a>.</div></li>
+        <li><div>Open any row to tweak it, then press <b>Log</b> as usual.</div></li>
+      </ol></div>
+    </div>
+    <div class="shots">
+      <figure>
+        <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Review · after Fill in with AI</span></div><img src="img/review-ai.png" alt="Review page after AI: the PR row is now PAY-9 with the note Matched by AI: the PR is about the payout CSV export" loading="lazy"></div>
+        <figcaption>The unassigned PR became PAY-9 with a reason. Nothing is logged yet.</figcaption>
+      </figure>
+    </div>
+  </div>
+  <div class="note warn"><b>Not yet tried with a real key</b><span>So far this has only been tested against a stand-in for Cursor's API. Each press starts one short Cursor Cloud Agent with no repository, sends that day's issue titles, PR titles and times, your ticket list (up to 60, flagged first) and your open assigned issues, reads its JSON answer and deletes the agent. Runs are billed to your Cursor plan. A 403 means a team admin needs to allow agents without a repository.</span></div>
+</section>
+
+<section id="summary">
+  <div class="sec-head">
+    <span class="num">Use case 09</span>
+    <h2>Describe your day and let AI add entries</h2>
+    <p>For meetings and other work nothing tracked. Same button, plus one sentence from you.</p>
+  </div>
+  <div class="uc">
+    <ol class="steps">
+      <li><div>Press <b>✦ Fill in with AI</b>. A text box opens above the rows.</div></li>
+      <li><div>Write your day in plain words, with times: "standup 15m, 1h pairing on PAY-12, sprint planning".</div></li>
+      <li><div>Press <b>Fill in</b>. Cursor:
+        <ul><li>sets the time on tracked entries you gave a time for;</li><li>adds new rows for work nothing tracked, marked "Added from your summary".</li></ul></div></li>
+      <li><div>Added rows use a ticket on your list, an issue assigned to you, or a key you typed (like <code>PAY-12</code>). If Cursor can't choose, it asks (<a href="#questions">use case 10</a>); otherwise the row stays <b>Unassigned</b> for you to pick.</div></li>
+      <li><div>Review, assign leftovers, press <b>Log</b>.</div></li>
+    </ol>
+    <div class="shots two">
+      <figure>
+        <div class="frame"><img src="img/review-summary.png" alt="Fill in with AI composer with a typed day summary" loading="lazy"></div>
+        <figcaption>Before: the summary box.</figcaption>
+      </figure>
+      <figure>
+        <div class="frame"><img src="img/review-summary-ai.png" alt="Review page with two new rows Added from your summary: PAY-8 45m and an Unassigned 30m interview with a question card below it" loading="lazy"></div>
+        <figcaption>After: two added rows. Cursor asks about the interview.</figcaption>
+      </figure>
+    </div>
+  </div>
+  <div class="note"><b>Privacy</b><span>What you type stays on this computer until you press <b>Fill in</b>. Pressing it again replaces entries a previous answer added that you haven't logged yet.</span></div>
+</section>
+
+<section id="questions">
+  <div class="sec-head">
+    <span class="num">Use case 10</span>
+    <h2>Answer the AI's questions</h2>
+    <p>When two tickets fit about equally, Cursor asks instead of guessing. One tap answers it.</p>
+  </div>
+  <div class="uc">
+    <ol class="steps">
+      <li><div>After <b>Fill in</b>, the toast says how many questions need you ("1 question needs your answer").</div></li>
+      <li><div>Find the blue card under the row, e.g. "Which ticket should the 30m interview go to?"</div></li>
+      <li><div>Tap one of the 2 to 4 ticket options. Each shows the ticket summary and, sometimes, why Cursor offered it ("flagged on your list").</div></li>
+      <li><div>The row is filled straight away with no second AI run, and shows "You picked OPS-13". Your answer is remembered if you close the popup.</div></li>
+      <li><div>None fit? <b>Another issue…</b> opens the normal issue picker. <b>Skip</b> leaves the row unassigned.</div></li>
+      <li><div>Press <b>Log</b> as usual.</div></li>
+    </ol>
+    <div class="shots">
+      <figure>
+        <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Review · AI question</span></div><img src="img/review-question.png" alt="Question card: Which ticket should the 30m interview go to? with options OPS-12 (flagged on your list) and OPS-13, plus Another issue and Skip" loading="lazy"></div>
+        <figcaption>Options are checked in code, so a question only offers tickets you could have picked anyway. Here a third suggestion that wasn't allowed was dropped.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="calendar">
+  <div class="sec-head">
+    <span class="num">Use case 11 · updated</span>
+    <h2>See, edit, move or delete past worklogs</h2>
+    <p>The calendar shows what's actually in Jira, not what was tracked.</p>
+  </div>
+  <div class="uc">
+    <ol class="steps">
+      <li><div>Open the <b>Calendar</b> tab.</div></li>
+      <li><div>The month view shows hours logged per day and the month total. Use <kbd>‹</kbd> <kbd>›</kbd> or <b>Today</b> to move around.</div></li>
+      <li><div>Pick a day. Its worklogs are listed underneath with ticket title, start time, comment and the ticket's estimate bar.</div></li>
+      <li><div>Tap a worklog to change any of:
+        <ul>
+          <li>the <b>ticket</b>: type in the issue field and pick another;</li>
+          <li>the <b>date</b> and <b>start time</b>;</li>
+          <li>the <b>duration</b> (type <code>1h</code>, <code>45m</code> or use the stepper);</li>
+          <li>the <b>comment</b>.</li>
+        </ul>
+        Then press <b>Save</b>. If you changed the date, the calendar jumps to the new day.</div></li>
+      <li><div>To remove one, tap <b>Delete</b>, then confirm with <b>Delete</b> again.</div></li>
+      <li><div><b>Add log</b> above the day's list opens Review on that day so you can add time.</div></li>
+      <li><div><b>Open in Jira</b> jumps to the issue if you need more.</div></li>
+    </ol>
+    <div class="shots">
+      <figure>
+        <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Calendar · editing a worklog</span></div><img src="img/calendar-date.png" alt="Calendar month view with a worklog open showing ticket, date, start time, duration and comment fields, with Delete, Open in Jira and Save" loading="lazy"></div>
+        <figcaption>The editor now has a date field next to the start time.</figcaption>
+      </figure>
+      <figure>
+        <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Calendar · moving to another ticket</span></div><img src="img/calendar-move.png" alt="PAY-8 worklog open with a red over-estimate bar, and the issue field searching rotate with OPS-12 and OPS-13 as results" loading="lazy"></div>
+        <figcaption>Moving PAY-8's 45m to OPS-12. The red bar shows PAY-8 is over its 2h estimate.</figcaption>
+      </figure>
+    </div>
+  </div>
+  <div class="note warn"><b>Moving a worklog is add then delete</b><span>Jira can't move a worklog between tickets, so Save adds a copy to the new ticket and deletes the original. The worklog gets a new ID in Jira.</span></div>
+</section>
+
+<section id="remind">
+  <div class="sec-head">
+    <span class="num">Use case 12</span>
+    <h2>Get reminded, once</h2>
+  </div>
+  <div class="uc">
+    <ol class="steps">
+      <li><div>The toolbar badge always shows unlogged time.</div></li>
+      <li><div>At 17:30 (changeable in Settings → Reminder) you get a single notification, only if something is unlogged.</div></li>
+      <li><div>Click it to open the review page and log.</div></li>
+    </ol>
+    <div class="note"><b>If everything's logged</b><span>No notification and an empty badge. No nagging.</span></div>
+  </div>
+</section>
+
+<section id="settings">
+  <div class="sec-head">
+    <span class="num">Use case 13</span>
+    <h2>Tune the settings</h2>
+    <p>Open the <b>Settings</b> tab (from the popup it opens in a page). Changes save as you make them.</p>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Setting</th><th>Default</th><th>What it changes</th></tr></thead>
+      <tbody>
+        <tr><td>Site / Sign in with</td><td>Browser</td><td>Which Jira, and whether to reuse your browser session or an API token.</td></tr>
+        <tr><td>Reminder</td><td class="mono">17:30</td><td>When the one daily nudge fires.</td></tr>
+        <tr><td>Round to</td><td>15 min</td><td>5, 15 or 30 min steps for rows and the stepper.</td></tr>
+        <tr><td>Idle after</td><td>15 min</td><td>Minutes without input before time stops counting.</td></tr>
+        <tr><td>Ignore sessions under</td><td>5 min</td><td>Drops brief visits so they don't become rows.</td></tr>
+        <tr><td>API key / Model</td><td>Empty</td><td>Turns on Fill in with AI. Model defaults to Cursor's.</td></tr>
+        <tr><td>Sites</td><td>Jira, GitHub, GitLab, Bitbucket</td><td>Add other hosts (self-hosted GitLab, Confluence, Figma) that should count.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="cheat">
+  <div class="sec-head">
+    <span class="num">Recap</span>
+    <h2>Cheat sheet</h2>
+  </div>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>I want to…</th><th>Do this</th></tr></thead>
+      <tbody>
+        <tr><td>log today</td><td>Toolbar icon → check rows → <b>Log</b></td></tr>
+        <tr><td>fix a wrong issue</td><td>Tap row → type in issue field → pick</td></tr>
+        <tr><td>split 2h across two issues</td><td>Tap row → <b>Split</b> → set issue on the new half</td></tr>
+        <tr><td>log a meeting</td><td>Touched in Jira today → <b>Add</b>, or describe it in Fill in with AI</td></tr>
+        <tr><td>keep my current tickets handy</td><td><b>Tickets</b> tab → <b>Fetch my assigned tickets</b> or search / paste keys</td></tr>
+        <tr><td>tell AI what matters now</td><td><b>Tickets</b> tab → tap the flag, or tick several → <b>Flag</b></td></tr>
+        <tr><td>hide sub-tickets</td><td>Tap the count button by a parent, or <b>Collapse all</b></td></tr>
+        <tr><td>reorder my tickets</td><td>Drag the handle, or focus it and press <kbd>↑</kbd> <kbd>↓</kbd></td></tr>
+        <tr><td>answer an AI question</td><td>Tap a ticket option on the blue card, or <b>Another issue…</b> / <b>Skip</b></td></tr>
+        <tr><td>get comments written</td><td>✦ Fill in with AI → <b>Fill in</b></td></tr>
+        <tr><td>log yesterday</td><td><b>Review</b> → tap yesterday in the week strip → <b>Add entry</b> → <b>Log</b></td></tr>
+        <tr><td>move a worklog to another ticket</td><td><b>Calendar</b> tab → tap it → change the issue → <b>Save</b></td></tr>
+        <tr><td>change a worklog's date</td><td><b>Calendar</b> tab → tap it → change the date → <b>Save</b></td></tr>
+        <tr><td>see if a ticket is over estimate</td><td>Look for a red bar under the row</td></tr>
+        <tr><td>change last Tuesday</td><td><b>Calendar</b> tab → pick the day → tap the worklog → <b>Save</b></td></tr>
+        <tr><td>delete a worklog</td><td><b>Calendar</b> tab → tap it → <b>Delete</b> twice</td></tr>
+        <tr><td>get the latest version</td><td><code>git pull</code>, <code>npm install</code>, <code>npm run build</code>, then reload the extension card</td></tr>
+        <tr><td>open a view full size</td><td>Arrow button beside the popup tabs</td></tr>
+        <tr><td>track a new site</td><td>Settings → Sites → add domain → <b>Allow</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer>
+  <span>Screenshots are taken automatically from the extension built from main, running in Chromium against a demo Jira with sample issues (PAY-7 to PAY-12, OPS-12, OPS-13). They refresh after every merge; see <code>docs/guide/README.md</code>.</span>
+  <span>Source: <a href="https://github.com/Alexk0309/lazy-jira-timelog">github.com/Alexk0309/lazy-jira-timelog</a>, folder <code>browser-extension</code>.</span>
+</footer>
+</main>
+</div>
+</body>
+</html>
