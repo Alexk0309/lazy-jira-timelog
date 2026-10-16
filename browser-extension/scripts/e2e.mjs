@@ -277,6 +277,9 @@ try {
   await tickets.reload();
   await tickets.waitForSelector('.ticket');
   if ((await shown()) !== 'PAY-7 PAY-8 PAY-9(sub) OPS-12 OPS-13(sub)') fail('ticket order lost after reload');
+  await tickets.waitForFunction(() => document.querySelector('.ticket[data-key="PAY-7"] .estimate-label')?.textContent === '2h 15m of 4h');
+  if (await tickets.$('.ticket[data-key="OPS-12"] .estimate')) fail('a ticket without an estimate shows a bar on the list');
+  console.log('ticket list estimate: PAY-7', await tickets.textContent('.ticket[data-key="PAY-7"] .estimate-label'));
 
   // Sub-tickets whose parent isn't on the list group under it, and the group collapses.
   await tickets.click('#paste-toggle');

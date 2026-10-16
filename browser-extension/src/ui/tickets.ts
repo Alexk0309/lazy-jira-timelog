@@ -1,7 +1,8 @@
 import { flattenKeys, groupTickets, type Ticket, type TicketList, type TicketNode } from '../core/tickets';
 import type { IssueSummary } from '../jira';
 import { call } from '../messages';
-import { el, toast } from './dom';
+import { estimateProgress } from '../core/estimate';
+import { el, estimateBar, toast } from './dom';
 import { goTo, mountTabs } from './nav';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -10,6 +11,8 @@ const listEl = $('list');
 let list: TicketList = { tickets: [], manualOrder: false };
 let tree: TicketNode[] = [];
 let siteUrl = '';
+/** Counts list changes, so a quiet refresh never overwrites a newer one. */
+let changes = 0;
 const selected = new Set<string>();
 /** Key being dragged, if any. */
 let dragging: string | null = null;
@@ -52,11 +55,19 @@ async function init(): Promise<void> {
   siteUrl = settings.siteUrl.replace(/\/+$/, '');
   list = await call('tickets');
   render();
+  // Estimates move as time is logged, so read them again quietly; a list change made meanwhile wins.
+  const seen = changes;
+  const fresh = await call('refreshTickets').catch(() => null);
+  if (fresh && seen === changes) {
+    list = fresh;
+    render();
+  }
 }
 
 /** Runs a list change, shows the new list, and reports a Jira problem instead of throwing. */
 async function run(change: () => Promise<TicketList>, done?: string): Promise<boolean> {
   try {
+    changes++;
     list = await change();
     $('setup').hidden = true;
     render();
@@ -84,6 +95,7 @@ async function fetchAssigned(): Promise<void> {
   button.disabled = true;
   try {
     const result = await call('addAssigned');
+    changes++;
     list = result.list;
     $('setup').hidden = true;
     render();
@@ -101,6 +113,7 @@ async function addFromText(text: string, fromPaste = false): Promise<void> {
   }
   try {
     const result = await call('addTickets', { text });
+    changes++;
     list = result.list;
     $('setup').hidden = true;
     render();
@@ -363,6 +376,7 @@ function renderTicket(node: TicketNode, depth: number): HTMLElement {
       el('div', { class: 'ticket-head' }, link, t.status ? el('span', { class: `chip ${t.statusCategory || 'new'}` }, t.status) : ''),
       el('div', { class: 'row-sub' }, t.summary || '(no summary)'),
       el('div', { class: 'ticket-meta' }, meta.filter(Boolean).join(' · ')),
+      estimateBar(estimateProgress(t.estimate), t.key),
     ),
     node.children.length > 0 ? toggleFor(node) : '',
   );
@@ -463,6 +477,7 @@ async function saveOrder(focusKey: string): Promise<void> {
   // Show the new order at once; storage follows.
   const keys = flattenKeys(tree);
   const byKey = new Map(list.tickets.map((t) => [t.key, t]));
+  changes++;
   list = { tickets: keys.map((k) => byKey.get(k)!), manualOrder: true };
   render();
   document.querySelector<HTMLElement>(`.ticket[data-key="${focusKey}"] .handle`)?.focus();
