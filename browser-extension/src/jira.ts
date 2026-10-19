@@ -291,15 +291,15 @@ export class JiraClient {
     return (body.issues ?? []).map((i) => ({ key: i.key, summary: i.fields.summary }));
   }
 
-  /** Full details of the given issues; keys Jira doesn't know are left out. */
-  async ticketDetails(keys: string[]): Promise<TicketDetails[]> {
+  /** Full details of the given issues; keys Jira doesn't know are left out. Skip `epics` when nothing groups them. */
+  async ticketDetails(keys: string[], epics = true): Promise<TicketDetails[]> {
     // Only well-formed keys go into JQL, so nothing typed can change the query.
     const valid = [...new Set(keys.map((k) => k.trim().toUpperCase()))].filter((k) => /^[A-Z][A-Z0-9_]+-[1-9]\d*$/.test(k));
     const found: TicketDetails[] = [];
     for (let i = 0; i < valid.length; i += 50) {
       const batch = valid.slice(i, i + 50);
       try {
-        found.push(...(await this.ticketsByJql(`key in (${batch.join(', ')})`, batch.length)));
+        found.push(...(await this.searchTickets(`key in (${batch.join(', ')})`, batch.length)));
       } catch (err) {
         // JQL fails as a whole when one key doesn't exist, so look the batch up one by one.
         if (!(err instanceof JiraError) || err.status !== 400) {
@@ -316,11 +316,15 @@ export class JiraClient {
         }
       }
     }
-    return found;
+    return epics ? this.withEpics(found) : found;
   }
 
   /** Issues matching a JQL query, with what the ticket list shows. */
   async ticketsByJql(jql: string, max = 100): Promise<TicketDetails[]> {
+    return this.withEpics(await this.searchTickets(jql, max));
+  }
+
+  private async searchTickets(jql: string, max: number): Promise<TicketDetails[]> {
     const found: TicketDetails[] = [];
     let nextPageToken: string | undefined;
     for (let page = 0; page < 10 && found.length < max; page++) {
@@ -337,6 +341,41 @@ export class JiraClient {
       }
     }
     return found.slice(0, max);
+  }
+
+  /**
+   * Fills in the epic of tickets whose parent isn't one, such as a sub-task
+   * under a story, by reading that parent's own parent. Tickets whose parent
+   * can't be read just stay without an epic.
+   */
+  private async withEpics(tickets: TicketDetails[]): Promise<TicketDetails[]> {
+    const parents = [...new Set(tickets.filter((t) => t.parentKey && !t.epicKey).map((t) => t.parentKey!))].filter((k) => /^[A-Z][A-Z0-9_]+-[1-9]\d*$/.test(k));
+    const epics = new Map<string, { key: string; summary: string }>();
+    for (let i = 0; i < parents.length; i += 50) {
+      const batch = parents.slice(i, i + 50);
+      try {
+        const body = await this.request<{ issues?: RawIssue[] }>('POST', '/rest/api/3/search/jql', {
+          jql: `key in (${batch.join(', ')})`,
+          fields: ['summary', 'issuetype', 'parent'],
+          maxResults: batch.length,
+        });
+        for (const issue of body.issues ?? []) {
+          const epic = epicOf(issue);
+          if (epic) {
+            epics.set(issue.key, epic);
+          }
+        }
+      } catch (err) {
+        // A parent that's gone or hidden from you fails the whole batch; group those tickets under "No epic".
+        if (!(err instanceof JiraError) || ![400, 403, 404].includes(err.status)) {
+          throw err;
+        }
+      }
+    }
+    return tickets.map((t) => {
+      const epic = !t.epicKey && t.parentKey ? epics.get(t.parentKey) : undefined;
+      return epic ? { ...t, epicKey: epic.key, epicSummary: epic.summary } : t;
+    });
   }
 
   async addWorklog(key: string, input: { started: number; seconds: number; comment: string }): Promise<string> {
@@ -391,14 +430,35 @@ interface RawIssue {
   fields: {
     summary?: string;
     status?: { name?: string; statusCategory?: { key?: string } };
-    issuetype?: { name?: string };
-    parent?: { key?: string; fields?: { summary?: string } };
+    issuetype?: RawIssueType;
+    parent?: { key?: string; fields?: { summary?: string; issuetype?: RawIssueType } };
     created?: string;
     timetracking?: RawTimeTracking;
   };
 }
 
+interface RawIssueType {
+  name?: string;
+  subtask?: boolean;
+  /** 1 for an epic, 0 for a story or task, -1 for a sub-task; higher levels sit above epics. */
+  hierarchyLevel?: number;
+}
+
+function isEpic(type?: RawIssueType): boolean {
+  return type?.hierarchyLevel !== undefined ? type.hierarchyLevel === 1 : !type?.subtask && /^epic$/i.test(type?.name ?? '');
+}
+
+/** The issue itself when it's an epic, else its parent when that is one. */
+function epicOf(issue: RawIssue): { key: string; summary: string } | undefined {
+  const f = issue.fields ?? {};
+  if (isEpic(f.issuetype)) {
+    return { key: issue.key, summary: f.summary ?? '' };
+  }
+  return f.parent?.key && isEpic(f.parent.fields?.issuetype) ? { key: f.parent.key, summary: f.parent.fields?.summary ?? '' } : undefined;
+}
+
 function toTicket(issue: RawIssue): TicketDetails {
+  const epic = epicOf(issue);
   const f = issue.fields ?? {};
   const created = f.created ? parseJiraTime(f.created) : NaN;
   return {
@@ -408,6 +468,9 @@ function toTicket(issue: RawIssue): TicketDetails {
     statusCategory: f.status?.statusCategory?.key ?? '',
     issueType: f.issuetype?.name ?? '',
     ...(f.parent?.key ? { parentKey: f.parent.key, parentSummary: f.parent.fields?.summary ?? '' } : {}),
+    // Always set, so a refresh moves a ticket whose epic changed in Jira; sub-tasks get theirs in withEpics.
+    epicKey: epic?.key,
+    epicSummary: epic?.summary,
     created: Number.isFinite(created) ? created : 0,
     // Always set, so a refresh clears an estimate that was removed in Jira.
     estimate: toEstimate(f.timetracking),

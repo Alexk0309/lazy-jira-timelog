@@ -350,6 +350,37 @@ describe('Service tickets', () => {
     expect(result.missing).toEqual([]);
   });
 
+  it('finds the epic of each ticket, through the story for a sub-task', async () => {
+    const epic = { issuetype: { name: 'Epic', hierarchyLevel: 1 } };
+    const story = { issuetype: { name: 'Story', hierarchyLevel: 0 } };
+    const { service, calls } = await setup((url, init) => {
+      const jql = JSON.parse((init?.body as string) ?? '{}').jql ?? '';
+      if (jql === 'key in (PAY-1, PAY-2, PAY-3, OPS-1)') {
+        return json({
+          issues: [
+            issue('PAY-1', epic),
+            issue('PAY-2', { parent: { key: 'PAY-1', fields: { summary: 'Payouts', ...epic } } }),
+            issue('PAY-3', { issuetype: { name: 'Sub-task', hierarchyLevel: -1 }, parent: { key: 'PAY-4', fields: { summary: 'Story', ...story } } }),
+            issue('OPS-1', { issuetype: { name: 'Sub-task', subtask: true }, parent: { key: 'OPS-9', fields: { summary: 'Loose story', ...story } } }),
+          ],
+          isLast: true,
+        });
+      }
+      if (jql === 'key in (PAY-4, OPS-9)') {
+        return json({ issues: [issue('PAY-4', { parent: { key: 'PAY-5', fields: { summary: 'Euro payouts', ...epic } } }), issue('OPS-9')], isLast: true });
+      }
+      return undefined;
+    });
+    const { list } = await service.addTickets('PAY-1 PAY-2 PAY-3 OPS-1');
+    expect(Object.fromEntries(list.tickets.map((t) => [t.key, [t.epicKey, t.epicSummary]]))).toEqual({
+      'PAY-1': ['PAY-1', 'Summary of PAY-1'],
+      'PAY-2': ['PAY-1', 'Payouts'],
+      'PAY-3': ['PAY-5', 'Euro payouts'],
+      'OPS-1': [undefined, undefined],
+    });
+    expect(calls.length).toBe(2);
+  });
+
   it('reads titles and estimates for the review, marking unknown keys', async () => {
     const { service, calls } = await setup((url) => {
       if (url.endsWith('/search/jql')) return json({ errorMessages: ["An issue with key 'OPS-404' does not exist"] }, 400);

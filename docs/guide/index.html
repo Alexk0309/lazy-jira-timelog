@@ -452,19 +452,20 @@ npm run build</pre></div></li>
           <li><b>Paste keys</b>, then paste keys or links (e.g. <code>PAY-12 PAY-14 OPS-3</code>) and press <b>Add</b>. Keys Jira doesn't know are skipped.</li>
         </ul></div></li>
       <li><div>Flag the priorities. Tap the flag on one ticket, or tick several checkboxes and press <b>Flag</b> or <b>Unflag</b> in the bar that appears. That bar also has <b>Remove</b>.</div></li>
-      <li><div>Tickets are grouped under their parent.
+      <li><div>Tickets are grouped under their epic.
         <ul>
-          <li>Sub-tasks sit indented under a parent that's on your list.</li>
-          <li>If the parent isn't on your list, it still shows as a shaded heading ("Parent, not on your list"). Its checkbox selects all its sub-tickets at once.</li>
+          <li>Stories and sub-tasks sit indented under their epic. A sub-task belongs to the epic of its story.</li>
+          <li>If the epic isn't on your list, it still shows as a shaded heading ("Epic, not on your list"). Its checkbox selects all its tickets at once.</li>
+          <li>Tickets outside any epic sit under <b>No epic</b> at the bottom.</li>
         </ul></div></li>
-      <li><div>Fold groups away. The count button beside a parent (e.g. <b>2 ⌄</b>) collapses or expands its sub-tickets. <b>Collapse all</b> and <b>Expand all</b> sit above the list. What you collapsed is remembered.</div></li>
+      <li><div>Fold groups away. The count button beside an epic (e.g. <b>2 ⌄</b>) collapses or expands its tickets. <b>Collapse all</b> and <b>Expand all</b> sit above the list. What you collapsed is remembered.</div></li>
       <li><div>Set your order. Drag a ticket by its handle, or focus the handle and use <kbd>↑</kbd> <kbd>↓</kbd>. The heading switches to "Your order"; <b>Sort by created date</b> puts it back to newest-created first.</div></li>
       <li><div>Keep it tidy. The refresh icon pulls fresh status from Jira, and <b>Remove N done tickets</b> appears when some are finished.</div></li>
     </ol>
     <div class="shots">
     <figure>
-      <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Tickets · expanded</span></div><img src="img/tickets.png" alt="Ticket list with 7 tickets, 2 flagged. PAY-10 is a shaded parent not on the list with sub-tickets PAY-12 and PAY-11; PAY-9 under PAY-8; OPS-13 under OPS-12. Count buttons beside each parent, and Expand all, Collapse all, Sort by created date above the list" loading="lazy"></div>
-      <figcaption>Grouped by parent. PAY-10 isn't on the list, so it shows as a shaded heading over its two sub-tickets.</figcaption>
+      <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Tickets · expanded</span></div><img src="img/tickets.png" alt="Ticket list with 7 tickets, 2 flagged. PAY-10 and PAY-1 are shaded epics not on the list, PAY-10 over PAY-12 and PAY-11, PAY-1 over PAY-8 and its sub-task PAY-9; PAY-7, OPS-13 and OPS-12 under No epic. Count buttons beside each heading, and Expand all, Collapse all, Sort by created date above the list" loading="lazy"></div>
+      <figcaption>Grouped by epic. PAY-10 isn't on the list, so it shows as a shaded heading over its two stories.</figcaption>
     </figure>
     <figure>
       <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Tickets · one group collapsed</span></div><img src="img/tickets-collapsed.png" alt="Same list with the PAY-10 group collapsed; its count button shows 2 with a right arrow" loading="lazy"></div>
@@ -650,7 +651,7 @@ npm run build</pre></div></li>
         <tr><td>log a meeting</td><td>Touched in Jira today → <b>Add</b>, or describe it in Fill in with AI</td></tr>
         <tr><td>keep my current tickets handy</td><td><b>Tickets</b> tab → <b>Fetch my assigned tickets</b> or search / paste keys</td></tr>
         <tr><td>tell AI what matters now</td><td><b>Tickets</b> tab → tap the flag, or tick several → <b>Flag</b></td></tr>
-        <tr><td>hide sub-tickets</td><td>Tap the count button by a parent, or <b>Collapse all</b></td></tr>
+        <tr><td>hide an epic's tickets</td><td>Tap the count button by an epic, or <b>Collapse all</b></td></tr>
         <tr><td>reorder my tickets</td><td>Drag the handle, or focus it and press <kbd>↑</kbd> <kbd>↓</kbd></td></tr>
         <tr><td>answer an AI question</td><td>Tap a ticket option on the blue card, or <b>Another issue…</b> / <b>Skip</b></td></tr>
         <tr><td>get comments written</td><td>✦ Fill in with AI → <b>Fill in</b></td></tr>

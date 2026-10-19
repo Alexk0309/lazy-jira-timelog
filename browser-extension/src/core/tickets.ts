@@ -9,6 +9,9 @@ export interface TicketDetails {
   issueType: string;
   parentKey?: string;
   parentSummary?: string;
+  /** The epic the ticket belongs to, found up the parent chain; an epic names itself. */
+  epicKey?: string;
+  epicSummary?: string;
   /** Epoch ms the issue was created in Jira. */
   created: number;
   /** The issue's own time tracking, when it has an estimate. */
@@ -33,9 +36,12 @@ export interface TicketList {
 export interface TicketNode {
   ticket: Ticket;
   children: TicketNode[];
-  /** A parent that isn't on the list itself, shown only to group its sub-tickets. */
+  /** An epic that isn't on the list itself, or the "No epic" heading, shown only to group tickets. */
   placeholder?: true;
 }
+
+/** Key of the heading that gathers tickets outside any epic; never a Jira key. */
+export const NO_EPIC = 'no-epic';
 
 /** Most tickets the list keeps, so storage and the AI prompt stay small. */
 export const MAX_TICKETS = 200;
@@ -96,40 +102,42 @@ export function sortByCreated(list: TicketList): TicketList {
 }
 
 /**
- * Nests each ticket under its parent, at any depth (epic, story, sub-task).
- * A parent that isn't on the list still heads a group for its sub-tickets, in
- * the place of its first one. Order within each level follows the list.
+ * Groups tickets under their epic, in the place of the epic's first ticket on
+ * the list. An epic that isn't on the list still heads its group. Tickets
+ * outside any epic go last under a "No epic" heading, or stay ungrouped when
+ * no ticket has an epic. Order within each group follows the list.
  */
 export function groupTickets(tickets: Ticket[]): TicketNode[] {
-  const keys = new Set(tickets.map((t) => t.key));
-  const nodes = new Map(tickets.map((t) => [t.key, { ticket: t, children: [] as TicketNode[] }]));
   const groups = new Map<string, TicketNode>();
-  const roots: TicketNode[] = [];
+  const loose: TicketNode[] = [];
   for (const ticket of tickets) {
-    const node = nodes.get(ticket.key)!;
-    if (!ticket.parentKey) {
-      roots.push(node);
-    } else if (!keys.has(ticket.parentKey)) {
-      let group = groups.get(ticket.parentKey);
-      if (!group) {
-        group = { ticket: parentPlaceholder(ticket), children: [], placeholder: true };
-        groups.set(ticket.parentKey, group);
-        roots.push(group);
-      }
-      group.children.push(node);
-    } else if (isAncestor(ticket.key, ticket.parentKey, tickets)) {
-      roots.push(node);
+    if (!ticket.epicKey) {
+      loose.push({ ticket, children: [] });
+      continue;
+    }
+    let group = groups.get(ticket.epicKey);
+    if (!group) {
+      group = { ticket: heading(ticket.epicKey, ticket.epicSummary ?? ''), children: [], placeholder: true };
+      groups.set(ticket.epicKey, group);
+    }
+    if (ticket.key === ticket.epicKey) {
+      group.ticket = ticket;
+      delete group.placeholder;
     } else {
-      nodes.get(ticket.parentKey)!.children.push(node);
+      group.children.push({ ticket, children: [] });
     }
   }
-  return roots;
+  if (groups.size === 0) {
+    return loose;
+  }
+  const roots = [...groups.values()];
+  return loose.length > 0 ? [...roots, { ticket: heading(NO_EPIC, 'No epic'), children: loose, placeholder: true }] : roots;
 }
 
-function parentPlaceholder(child: Ticket): Ticket {
+function heading(key: string, summary: string): Ticket {
   return {
-    key: child.parentKey!,
-    summary: child.parentSummary ?? '',
+    key,
+    summary,
     status: '',
     statusCategory: '',
     issueType: '',
@@ -139,20 +147,7 @@ function parentPlaceholder(child: Ticket): Ticket {
   };
 }
 
-/** True when `key` sits somewhere above `start` in the parent chain, which would make a loop. */
-function isAncestor(key: string, start: string, tickets: Ticket[]): boolean {
-  const parentOf = new Map(tickets.map((t) => [t.key, t.parentKey]));
-  const seen = new Set<string>();
-  for (let at: string | undefined = start; at && !seen.has(at); at = parentOf.get(at)) {
-    if (at === key) {
-      return true;
-    }
-    seen.add(at);
-  }
-  return false;
-}
-
-/** Keys of listed tickets in the order the grouped list shows them, parents before their sub-tickets. */
+/** Keys of listed tickets in the order the grouped list shows them, epics before their tickets. */
 export function flattenKeys(nodes: TicketNode[]): string[] {
   return nodes.flatMap((n) => [...(n.placeholder ? [] : [n.ticket.key]), ...flattenKeys(n.children)]);
 }

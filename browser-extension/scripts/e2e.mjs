@@ -12,16 +12,22 @@ const posted = [];
 const cursorCalls = [];
 const edits = [];
 
-// Issues the fake Jira knows, with what the ticket list shows. PAY-9, OPS-13, PAY-11 and PAY-12 are sub-tasks.
+// Issues the fake Jira knows, with what the ticket list shows. PAY-1 and PAY-10 are epics; PAY-9 and OPS-13 are sub-tasks.
 const issues = {
+  'PAY-1': { summary: 'Finance payouts', created: '2026-08-20T09:00:00.000+0000', type: 'Epic' },
   'PAY-7': { summary: 'Refund flow for card payments', created: '2026-09-01T09:00:00.000+0000', estimate: 4 * 3600, spent: 3600 },
-  'PAY-8': { summary: 'Payout reports for finance', created: '2026-09-05T09:00:00.000+0000', estimate: 2 * 3600, spent: 5400 },
+  'PAY-8': { summary: 'Payout reports for finance', created: '2026-09-05T09:00:00.000+0000', parent: 'PAY-1', estimate: 2 * 3600, spent: 5400 },
   'PAY-9': { summary: 'Payout CSV export for finance', created: '2026-09-10T09:00:00.000+0000', parent: 'PAY-8', type: 'Sub-task', estimate: 3600, spent: 0 },
   'OPS-12': { summary: 'Rotate staging credentials', created: '2026-09-20T09:00:00.000+0000' },
   'OPS-13': { summary: 'Rotate the payout service key', created: '2026-09-25T09:00:00.000+0000', parent: 'OPS-12', type: 'Sub-task' },
   'PAY-10': { summary: 'Payouts in euros', created: '2026-09-26T09:00:00.000+0000', type: 'Epic' },
-  'PAY-11': { summary: 'Euro bank details form', created: '2026-09-27T09:00:00.000+0000', parent: 'PAY-10', type: 'Sub-task' },
-  'PAY-12': { summary: 'Euro payout fees', created: '2026-09-28T09:00:00.000+0000', parent: 'PAY-10', type: 'Sub-task' },
+  'PAY-11': { summary: 'Euro bank details form', created: '2026-09-27T09:00:00.000+0000', parent: 'PAY-10' },
+  'PAY-12': { summary: 'Euro payout fees', created: '2026-09-28T09:00:00.000+0000', parent: 'PAY-10' },
+};
+const LEVELS = { Epic: 1, Story: 0, 'Sub-task': -1 };
+const issueType = (key) => {
+  const name = issues[key].type ?? 'Story';
+  return { name, subtask: name === 'Sub-task', hierarchyLevel: LEVELS[name] };
 };
 const issueJson = (key) => {
   const i = issues[key];
@@ -30,9 +36,9 @@ const issueJson = (key) => {
     fields: {
       summary: i.summary,
       status: { name: 'In Progress', statusCategory: { key: 'indeterminate' } },
-      issuetype: { name: i.type ?? 'Story' },
+      issuetype: issueType(key),
       created: i.created,
-      ...(i.parent ? { parent: { key: i.parent, fields: { summary: issues[i.parent].summary } } } : {}),
+      ...(i.parent ? { parent: { key: i.parent, fields: { summary: issues[i.parent].summary, issuetype: issueType(i.parent) } } } : {}),
       timetracking: timetracking(key),
     },
   };
@@ -244,18 +250,22 @@ try {
   await tickets.goto(page('tickets.html'));
   await tickets.waitForSelector('.empty');
   await tickets.click('#fetch-assigned');
-  await tickets.waitForFunction(() => document.querySelectorAll('.ticket').length === 3);
+  // Headings for epics and "No epic" are rows too, so count only the tickets.
+  const ticketCount = (n) => tickets.waitForFunction((n) => document.querySelectorAll('.ticket:not(.parent)').length === n, n);
+  await ticketCount(3);
   await tickets.fill('#search', 'rotate');
   await tickets.waitForSelector('#results li');
   await tickets.click('#results li:has-text("OPS-12")');
-  await tickets.waitForFunction(() => document.querySelectorAll('.ticket').length === 4);
+  await ticketCount(4);
   await tickets.click('#paste-toggle');
   await tickets.fill('#paste-text', 'ops-13 NOPE-1');
   await tickets.click('#paste-add');
-  await tickets.waitForFunction(() => document.querySelectorAll('.ticket').length === 5);
+  await ticketCount(5);
   const shown = () => tickets.$$eval('.ticket', (rs) => rs.map((r) => `${r.dataset.key}${r.style.getPropertyValue('--depth').trim() === '1' ? '(sub)' : ''}`).join(' '));
   console.log('ticket list:', await shown());
-  if ((await shown()) !== 'OPS-12 OPS-13(sub) PAY-8 PAY-9(sub) PAY-7') fail('tickets are not newest first with sub-tasks under their parents');
+  // PAY-9 is a sub-task of PAY-8, so it joins PAY-8's epic; the rest have no epic.
+  if ((await shown()) !== 'PAY-1 PAY-9(sub) PAY-8(sub) no-epic OPS-13(sub) OPS-12(sub) PAY-7(sub)') fail('tickets are not newest first, grouped by epic');
+  if ((await tickets.textContent('.ticket.parent[data-key="PAY-1"] .ticket-meta')) !== 'Epic, not on your list') fail('epic heading not labelled');
   await tickets.click('.ticket[data-key="OPS-12"] .flag');
   await tickets.check('.ticket[data-key="PAY-7"] input[type=checkbox]');
   await tickets.check('.ticket[data-key="PAY-9"] input[type=checkbox]');
@@ -264,32 +274,35 @@ try {
   await tickets.check('.ticket[data-key="PAY-9"] input[type=checkbox]');
   await tickets.click('#sel-unflag');
   await tickets.waitForFunction(() => document.querySelectorAll('.flag[aria-pressed="true"]').length === 2);
-  await tickets.dragAndDrop('.ticket[data-key="PAY-7"]', '.ticket[data-key="OPS-12"]', { targetPosition: { x: 200, y: 5 } });
-  await tickets.waitForFunction(() => document.querySelector('.ticket').dataset.key === 'PAY-7');
+  await tickets.dragAndDrop('.ticket[data-key="PAY-7"]', '.ticket[data-key="OPS-13"]', { targetPosition: { x: 200, y: 5 } });
+  await tickets.waitForFunction(() => document.querySelector('.ticket[data-key="no-epic"]').nextElementSibling.dataset.key === 'PAY-7');
   await tickets.focus('.ticket[data-key="PAY-8"] .handle');
   await tickets.keyboard.press('ArrowUp');
   await tickets.waitForFunction(() => document.querySelectorAll('.ticket')[1].dataset.key === 'PAY-8');
+  // "No epic" stays last: an epic can't move below it.
+  await tickets.focus('.ticket[data-key="PAY-1"] .handle');
+  await tickets.keyboard.press('ArrowDown');
   console.log('after drag and keyboard move:', await shown(), '·', await tickets.textContent('#list-title'));
-  if ((await shown()) !== 'PAY-7 PAY-8 PAY-9(sub) OPS-12 OPS-13(sub)') fail('drag or keyboard reorder did not stick');
+  if ((await shown()) !== 'PAY-1 PAY-8(sub) PAY-9(sub) no-epic PAY-7(sub) OPS-13(sub) OPS-12(sub)') fail('drag or keyboard reorder did not stick');
   const storedTickets = await worker.evaluate(async () => (await chrome.storage.local.get('tickets')).tickets);
-  if (!storedTickets.manualOrder || storedTickets.tickets.map((t) => t.key).join(' ') !== 'PAY-7 PAY-8 PAY-9 OPS-12 OPS-13') fail('ticket order was not saved');
+  if (!storedTickets.manualOrder || storedTickets.tickets.map((t) => t.key).join(' ') !== 'PAY-8 PAY-9 PAY-7 OPS-13 OPS-12') fail('ticket order was not saved');
   if (shots) await tickets.screenshot({ path: join(shots, 'tickets.png'), fullPage: true });
   await tickets.reload();
   await tickets.waitForSelector('.ticket');
-  if ((await shown()) !== 'PAY-7 PAY-8 PAY-9(sub) OPS-12 OPS-13(sub)') fail('ticket order lost after reload');
+  if ((await shown()) !== 'PAY-1 PAY-8(sub) PAY-9(sub) no-epic PAY-7(sub) OPS-13(sub) OPS-12(sub)') fail('ticket order lost after reload');
   await tickets.waitForFunction(() => document.querySelector('.ticket[data-key="PAY-7"] .estimate-label')?.textContent === '2h 15m of 4h');
   if (await tickets.$('.ticket[data-key="OPS-12"] .estimate')) fail('a ticket without an estimate shows a bar on the list');
   console.log('ticket list estimate: PAY-7', await tickets.textContent('.ticket[data-key="PAY-7"] .estimate-label'));
 
-  // Sub-tickets whose parent isn't on the list group under it, and the group collapses.
+  // Stories of an epic that isn't on the list group under it, and the group collapses.
   await tickets.click('#paste-toggle');
   await tickets.fill('#paste-text', 'PAY-11 PAY-12');
   await tickets.click('#paste-add');
   await tickets.waitForSelector('.ticket.parent[data-key="PAY-10"]');
-  console.log('grouped by parent:', await shown());
-  if (!(await shown()).startsWith('PAY-10 PAY-12(sub) PAY-11(sub) ')) fail('sub-tickets were not grouped under their parent');
+  console.log('grouped by epic:', await shown());
+  if (!(await shown()).startsWith('PAY-10 PAY-12(sub) PAY-11(sub) ')) fail('stories were not grouped under their epic');
   await tickets.check('.ticket.parent[data-key="PAY-10"] input[type=checkbox]');
-  if ((await tickets.textContent('#selection-count')) !== '2 selected') fail('parent checkbox did not select its sub-tickets');
+  if ((await tickets.textContent('#selection-count')) !== '2 selected') fail('epic checkbox did not select its tickets');
   await tickets.click('#sel-clear');
   await tickets.click('.ticket[data-key="PAY-10"] .toggle');
   await tickets.waitForFunction(() => !document.querySelector('.ticket[data-key="PAY-11"]'));
@@ -298,8 +311,8 @@ try {
   if ((await tickets.$('.ticket[data-key="PAY-11"]')) || (await tickets.getAttribute('.ticket[data-key="PAY-10"] .toggle', 'aria-expanded')) !== 'false') fail('collapsed group did not stay collapsed');
   if (shots) await tickets.screenshot({ path: join(shots, 'tickets-collapsed.png'), fullPage: true });
   await tickets.click('#collapse-all');
-  await tickets.waitForFunction(() => document.querySelectorAll('.ticket').length === 4);
-  if ((await shown()) !== 'PAY-10 PAY-7 PAY-8 OPS-12') fail('collapse all left sub-tickets showing');
+  await tickets.waitForFunction(() => document.querySelectorAll('.ticket').length === 3);
+  if ((await shown()) !== 'PAY-10 PAY-1 no-epic') fail('collapse all left tickets showing');
   if (!(await tickets.isDisabled('#collapse-all'))) fail('collapse all still enabled with everything collapsed');
   await tickets.click('#expand-all');
   await tickets.waitForSelector('.ticket[data-key="OPS-13"]');
