@@ -422,7 +422,7 @@ export class Service {
     }
     let details: list.TicketDetails[];
     try {
-      details = await client.ticketDetails(wanted);
+      details = await client.ticketDetails(wanted, false);
     } catch {
       return {};
     }

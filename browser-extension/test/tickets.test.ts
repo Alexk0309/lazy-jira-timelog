@@ -4,6 +4,7 @@ import {
   EMPTY_LIST,
   flattenKeys,
   groupTickets,
+  NO_EPIC,
   prioritized,
   refreshTickets,
   reorderTickets,
@@ -13,7 +14,7 @@ import {
 } from '../src/core/tickets';
 
 const day = (d: number) => new Date(2026, 9, d).getTime();
-const t = (key: string, created: number, parentKey?: string): TicketDetails => ({
+const t = (key: string, created: number, parentKey?: string, epicKey?: string): TicketDetails => ({
   key,
   summary: `Summary of ${key}`,
   status: 'To Do',
@@ -21,6 +22,7 @@ const t = (key: string, created: number, parentKey?: string): TicketDetails => (
   issueType: parentKey ? 'Sub-task' : 'Story',
   created,
   ...(parentKey ? { parentKey, parentSummary: `Summary of ${parentKey}` } : {}),
+  ...(epicKey ? { epicKey, epicSummary: `Summary of ${epicKey}` } : {}),
 });
 
 describe('ticket list', () => {
@@ -51,34 +53,37 @@ describe('ticket list', () => {
     ]);
   });
 
-  it('nests sub-tickets under parents on the list, at any depth', () => {
+  it('leaves the list ungrouped when no ticket has an epic', () => {
+    const { list } = addTickets(EMPTY_LIST, [t('PAY-1', day(1)), t('PAY-2', day(2), 'PAY-1')], 0);
+    const tree = groupTickets(list.tickets);
+    expect(tree.map((n) => [n.ticket.key, n.children.length])).toEqual([
+      ['PAY-2', 0],
+      ['PAY-1', 0],
+    ]);
+  });
+
+  it('groups stories and sub-tasks under their epic, with the rest under "No epic" last', () => {
     const { list } = addTickets(
       EMPTY_LIST,
-      [t('PAY-1', day(1)), t('PAY-2', day(2), 'PAY-1'), t('PAY-3', day(3), 'PAY-2'), t('PAY-4', day(4), 'OTHER-1')],
+      [
+        t('PAY-1', day(1), undefined, 'PAY-1'),
+        t('PAY-2', day(2), 'PAY-1', 'PAY-1'),
+        t('PAY-3', day(3), 'PAY-2', 'PAY-1'),
+        t('OPS-4', day(4), 'OPS-2'),
+        t('OPS-5', day(5), 'OPS-3', 'OPS-1'),
+      ],
       0,
     );
     const tree = groupTickets(list.tickets);
-    expect(tree.map((n) => n.ticket.key)).toEqual(['OTHER-1', 'PAY-1']);
-    expect(tree[1].children[0].children[0].ticket.key).toBe('PAY-3');
-    expect(flattenKeys(tree)).toEqual(['PAY-4', 'PAY-1', 'PAY-2', 'PAY-3']);
-  });
-
-  it('groups sub-tickets under a parent that is not on the list', () => {
-    const { list } = addTickets(EMPTY_LIST, [t('PAY-1', day(1)), t('PAY-8', day(4), 'PAY-5'), t('PAY-9', day(2), 'PAY-5'), t('OPS-3', day(3), 'OPS-1')], 0);
-    const tree = groupTickets(list.tickets);
     expect(tree.map((n) => [n.ticket.key, !!n.placeholder])).toEqual([
-      ['PAY-5', true],
       ['OPS-1', true],
       ['PAY-1', false],
+      [NO_EPIC, true],
     ]);
-    expect(tree[0].ticket.summary).toBe('Summary of PAY-5');
-    expect(tree[0].children.map((n) => n.ticket.key)).toEqual(['PAY-8', 'PAY-9']);
-    expect(flattenKeys(tree)).toEqual(['PAY-8', 'PAY-9', 'OPS-3', 'PAY-1']);
-  });
-
-  it('survives a parent loop', () => {
-    const { list } = addTickets(EMPTY_LIST, [t('A-1', day(1), 'A-2'), t('A-2', day(2), 'A-1')], 0);
-    expect(flattenKeys(groupTickets(list.tickets)).sort()).toEqual(['A-1', 'A-2']);
+    expect(tree[0].ticket.summary).toBe('Summary of OPS-1');
+    expect(tree[1].children.map((n) => n.ticket.key)).toEqual(['PAY-3', 'PAY-2']);
+    expect(tree[2].children.map((n) => n.ticket.key)).toEqual(['OPS-4']);
+    expect(flattenKeys(tree)).toEqual(['OPS-5', 'PAY-1', 'PAY-3', 'PAY-2', 'OPS-4']);
   });
 
   it('gives AI the flagged tickets first, then the rest in list order', () => {

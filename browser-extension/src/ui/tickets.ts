@@ -1,4 +1,4 @@
-import { flattenKeys, groupTickets, type Ticket, type TicketList, type TicketNode } from '../core/tickets';
+import { flattenKeys, groupTickets, NO_EPIC, type Ticket, type TicketList, type TicketNode } from '../core/tickets';
 import type { IssueSummary } from '../jira';
 import { call } from '../messages';
 import { estimateProgress } from '../core/estimate';
@@ -17,7 +17,7 @@ const selected = new Set<string>();
 /** Key being dragged, if any. */
 let dragging: string | null = null;
 const COLLAPSED_KEY = 'tickets.collapsed';
-/** Parents whose sub-tickets are hidden; remembered on this computer. */
+/** Epics whose tickets are hidden; remembered on this computer. */
 const collapsed = loadCollapsed();
 
 mountTabs('tickets.html');
@@ -257,13 +257,14 @@ function renderNodes(nodes: TicketNode[], depth: number): HTMLElement[] {
   ]);
 }
 
-/** Heads the sub-tickets of a parent that isn't on the list; its checkbox selects them all. */
+/** Heads the tickets of an epic that isn't on the list, or those outside any epic; its checkbox selects them all. */
 function renderParent(node: TicketNode, depth: number): HTMLElement {
   const t = node.ticket;
-  const row = el('div', { class: 'ticket parent', 'data-key': t.key, draggable: 'true', style: `--depth: ${depth}` });
+  const noEpic = t.key === NO_EPIC;
+  const row = el('div', { class: 'ticket parent', 'data-key': t.key, draggable: String(!noEpic), style: `--depth: ${depth}` });
   const keys = flattenKeys(node.children);
   const picked = keys.filter((k) => selected.has(k)).length;
-  const check = el('input', { type: 'checkbox', 'aria-label': `Select the sub-tickets of ${t.key}` }) as HTMLInputElement;
+  const check = el('input', { type: 'checkbox', 'aria-label': noEpic ? 'Select the tickets with no epic' : `Select the tickets of ${t.key}` }) as HTMLInputElement;
   check.checked = picked > 0 && picked === keys.length;
   check.indeterminate = picked > 0 && picked < keys.length;
   check.addEventListener('change', () => {
@@ -276,6 +277,17 @@ function renderParent(node: TicketNode, depth: number): HTMLElement {
     }
     render();
   });
+  if (noEpic) {
+    // Always last, so it has nothing to drag.
+    row.append(
+      el('span', { class: 'handle-space', 'aria-hidden': 'true' }),
+      check,
+      el('span', { class: 'flag-space', 'aria-hidden': 'true' }),
+      el('div', { class: 'row-text' }, el('div', { class: 'ticket-head' }, el('span', { class: 'row-key' }, 'No epic')), el('div', { class: 'ticket-meta' }, 'Tickets outside any epic')),
+      toggleFor(node),
+    );
+    return row;
+  }
   const link = el('a', { class: 'row-key', href: `${siteUrl}/browse/${t.key}`, target: '_blank', rel: 'noopener', draggable: 'false' }, t.key);
   row.append(
     handleFor(t.key),
@@ -286,7 +298,7 @@ function renderParent(node: TicketNode, depth: number): HTMLElement {
       { class: 'row-text' },
       el('div', { class: 'ticket-head' }, link),
       el('div', { class: 'row-sub' }, t.summary || '(no summary)'),
-      el('div', { class: 'ticket-meta' }, 'Parent, not on your list'),
+      el('div', { class: 'ticket-meta' }, 'Epic, not on your list'),
     ),
     toggleFor(node),
   );
@@ -294,7 +306,7 @@ function renderParent(node: TicketNode, depth: number): HTMLElement {
   return row;
 }
 
-/** Keys of every ticket or parent heading that has sub-tickets, at any depth. */
+/** Keys of every epic or heading that has tickets under it. */
 function parentKeys(nodes: TicketNode[]): string[] {
   return nodes.flatMap((n) => (n.children.length > 0 ? [n.ticket.key, ...parentKeys(n.children)] : []));
 }
@@ -311,7 +323,7 @@ function setAllCollapsed(shut: boolean): void {
   render();
 }
 
-/** Shows or hides a parent's sub-tickets. */
+/** Shows or hides the tickets under an epic or heading. */
 function toggleFor(node: TicketNode): HTMLElement {
   const key = node.ticket.key;
   const count = node.children.length;
@@ -322,7 +334,7 @@ function toggleFor(node: TicketNode): HTMLElement {
       class: 'toggle',
       type: 'button',
       'aria-expanded': String(open),
-      'aria-label': `${open ? 'Hide' : 'Show'} ${count} ${count === 1 ? 'sub-ticket' : 'sub-tickets'} of ${key}`,
+      'aria-label': `${open ? 'Hide' : 'Show'} ${count} ${count === 1 ? 'ticket' : 'tickets'} ${key === NO_EPIC ? 'with no epic' : `of ${key}`}`,
     },
     String(count),
     svg('m6 9 6 6 6-6'),
@@ -395,7 +407,7 @@ function handleFor(key: string): HTMLElement {
   return handle;
 }
 
-/** Drag a row to reorder it among its siblings; a parent brings its sub-tickets along. */
+/** Drag a row to reorder it among its siblings; an epic brings its tickets along. */
 function makeDraggable(row: HTMLElement, key: string): void {
   row.addEventListener('dragstart', (e) => {
     dragging = key;
@@ -431,7 +443,7 @@ function makeDraggable(row: HTMLElement, key: string): void {
 
 // ---------- Ordering ----------
 
-/** The list of nodes that `key` sits in: the top level, or its parent's sub-tickets. */
+/** The list of nodes that `key` sits in: the top level, or its epic's tickets. */
 function siblingsOf(key: string, nodes: TicketNode[] = tree): TicketNode[] | null {
   if (nodes.some((n) => n.ticket.key === key)) {
     return nodes;
@@ -445,10 +457,10 @@ function siblingsOf(key: string, nodes: TicketNode[] = tree): TicketNode[] | nul
   return null;
 }
 
-/** Sub-tickets stay with their parent, so a drag only reorders within one level. */
+/** Tickets stay with their epic, so a drag only reorders within one level. "No epic" stays last. */
 function sameSiblings(a: string, b: string): boolean {
   const siblings = siblingsOf(a);
-  return !!siblings && siblings.some((n) => n.ticket.key === b);
+  return b !== NO_EPIC && !!siblings && siblings.some((n) => n.ticket.key === b);
 }
 
 async function moveTo(key: string, target: string, after: boolean): Promise<void> {
@@ -465,7 +477,7 @@ async function moveBy(key: string, step: number): Promise<void> {
   const siblings = siblingsOf(key);
   const index = siblings?.findIndex((n) => n.ticket.key === key) ?? -1;
   const to = index + step;
-  if (!siblings || index < 0 || to < 0 || to >= siblings.length) {
+  if (!siblings || index < 0 || to < 0 || to >= siblings.length || siblings[to].ticket.key === NO_EPIC) {
     return;
   }
   const [node] = siblings.splice(index, 1);
