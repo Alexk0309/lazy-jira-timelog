@@ -1032,6 +1032,10 @@ a.btn {
   flex: 0 0 30px;
 }
 
+.ticket .handle-space {
+  flex: 0 0 24px;
+}
+
 .ticket.parent {
   background: var(--surface-2);
 }
