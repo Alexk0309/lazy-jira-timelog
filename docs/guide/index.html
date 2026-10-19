@@ -161,7 +161,7 @@ a { color: var(--accent); }
     <span class="chip">Your own ticket list</span>
     <span class="chip">Optional Cursor AI</span>
   </div>
-  <div class="note"><b>New in this version</b><span><a href="#estimates">Ticket titles and estimate bars</a> on Review and Calendar rows; <a href="#otherday">logging time on any day</a> with a week strip, date picker and Add entry; and <a href="#calendar">moving a worklog</a> to another ticket or date, plus Add log from the Calendar.</span></div>
+  <div class="note"><b>New in this version</b><span>The <a href="#tickets">Tickets</a> list is now grouped by epic instead of parent, with a <b>No epic</b> group at the bottom. It also shows each ticket's <a href="#estimates">estimate bar</a>, the same one as on Review and Calendar rows.</span></div>
 </header>
 
 <section id="how">
@@ -361,7 +361,7 @@ npm run build</pre></div></li>
   </div>
 
   <div id="estimates" style="display:grid;gap:14px;scroll-margin-top:24px">
-    <h3>Reading the estimate bar <span class="chip" style="margin-left:6px;font-size:12px">new</span></h3>
+    <h3>Reading the estimate bar</h3>
     <div class="grid-rules">
       <div class="rule"><h3>Solid blue</h3><p>Time already logged in Jira against the ticket's original estimate.</p></div>
       <div class="rule"><h3>Light blue</h3><p>The time this row is about to add. The label reads e.g. "1h + 1h of 4h".</p></div>
@@ -373,7 +373,7 @@ npm run build</pre></div></li>
 
 <section id="otherday">
   <div class="sec-head">
-    <span class="num">Use case 04 · new</span>
+    <span class="num">Use case 04</span>
     <h2>Log time on another day</h2>
     <p>Forgot yesterday, or worked on something the browser never saw? Review can show and log any past day.</p>
   </div>
@@ -438,7 +438,7 @@ npm run build</pre></div></li>
 
 <section id="tickets">
   <div class="sec-head">
-    <span class="num">Use case 07</span>
+    <span class="num">Use case 07 · updated</span>
     <h2>Build your ticket list</h2>
     <p>The tickets you're working on right now, kept in your own order. The issue picker and Fill in with AI use this list first, which helps a lot when Jira is shared by many teams.</p>
   </div>
@@ -460,12 +460,13 @@ npm run build</pre></div></li>
         </ul></div></li>
       <li><div>Fold groups away. The count button beside an epic (e.g. <b>2 ⌄</b>) collapses or expands its tickets. <b>Collapse all</b> and <b>Expand all</b> sit above the list. What you collapsed is remembered.</div></li>
       <li><div>Set your order. Drag a ticket by its handle, or focus the handle and use <kbd>↑</kbd> <kbd>↓</kbd>. The heading switches to "Your order"; <b>Sort by created date</b> puts it back to newest-created first.</div></li>
+      <li><div>Tickets with an original estimate in Jira show an <a href="#estimates">estimate bar</a> under them, e.g. "2h 15m of 4h". Tickets without one show no bar.</div></li>
       <li><div>Keep it tidy. The refresh icon pulls fresh status from Jira, and <b>Remove N done tickets</b> appears when some are finished.</div></li>
     </ol>
     <div class="shots">
     <figure>
       <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Tickets · expanded</span></div><img src="img/tickets.png" alt="Ticket list with 7 tickets, 2 flagged. PAY-10 and PAY-1 are shaded epics not on the list, PAY-10 over PAY-12 and PAY-11, PAY-1 over PAY-8 and its sub-task PAY-9; PAY-7, OPS-13 and OPS-12 under No epic. Count buttons beside each heading, and Expand all, Collapse all, Sort by created date above the list" loading="lazy"></div>
-      <figcaption>Grouped by epic. PAY-10 isn't on the list, so it shows as a shaded heading over its two stories.</figcaption>
+      <figcaption>Grouped by epic, with estimate bars on tickets that have an estimate. PAY-10 isn't on the list, so it shows as a shaded heading over its two stories.</figcaption>
     </figure>
     <figure>
       <div class="frame"><div class="bar"><i></i><i></i><i></i><span>Tickets · one group collapsed</span></div><img src="img/tickets-collapsed.png" alt="Same list with the PAY-10 group collapsed; its count button shows 2 with a right arrow" loading="lazy"></div>
@@ -564,7 +565,7 @@ npm run build</pre></div></li>
 
 <section id="calendar">
   <div class="sec-head">
-    <span class="num">Use case 11 · updated</span>
+    <span class="num">Use case 11</span>
     <h2>See, edit, move or delete past worklogs</h2>
     <p>The calendar shows what's actually in Jira, not what was tracked.</p>
   </div>
@@ -658,7 +659,7 @@ npm run build</pre></div></li>
         <tr><td>log yesterday</td><td><b>Review</b> → tap yesterday in the week strip → <b>Add entry</b> → <b>Log</b></td></tr>
         <tr><td>move a worklog to another ticket</td><td><b>Calendar</b> tab → tap it → change the issue → <b>Save</b></td></tr>
         <tr><td>change a worklog's date</td><td><b>Calendar</b> tab → tap it → change the date → <b>Save</b></td></tr>
-        <tr><td>see if a ticket is over estimate</td><td>Look for a red bar under the row</td></tr>
+        <tr><td>see if a ticket is over estimate</td><td>Look for a red bar under the row, on Review, Tickets or Calendar</td></tr>
         <tr><td>change last Tuesday</td><td><b>Calendar</b> tab → pick the day → tap the worklog → <b>Save</b></td></tr>
         <tr><td>delete a worklog</td><td><b>Calendar</b> tab → tap it → <b>Delete</b> twice</td></tr>
         <tr><td>get the latest version</td><td><code>git pull</code>, <code>npm install</code>, <code>npm run build</code>, then reload the extension card</td></tr>
